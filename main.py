@@ -34,6 +34,7 @@ async def process_video_route(
     request: Request,
     source_lang: str = Form(...),
     target_lang: str = Form(...),
+    speaker_count: str = Form("auto"),
     video_file: UploadFile = File(None),
     youtube_url: str = Form(None)
 ):
@@ -79,12 +80,17 @@ async def process_video_route(
         def progress_callback(step, status="processing"):
             print(f"Progress: {step} - {status}")
 
+        # Parse speaker count
+        num_speakers = None if speaker_count == "auto" else int(speaker_count)
+        print(f"Speaker count: {speaker_count} (parsed: {num_speakers})")
+
         result = process_video(
             video_path, 
             source_lang, 
             target_lang, 
             progress_callback=progress_callback,
-            tts_provider="azure"  # Change to "elevenlabs" to use ElevenLabs TTS
+            tts_provider="azure",
+            speaker_count=num_speakers  # Pass to pipeline for diarization
         )
         
         # Prepare result data

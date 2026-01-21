@@ -1,7 +1,7 @@
 import time
 import os
 import shutil
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 # Core modules (assuming these exist from previous Context)
 from core.audioextractor import extract_audio
@@ -15,10 +15,14 @@ def process_video(
     source_lang: str, 
     target_lang: str,
     progress_callback=None,
-    tts_provider: str = "azure"  # Options: 'elevenlabs' or 'azure'
+    tts_provider: str = "azure",
+    speaker_count: Optional[int] = None  # None = auto-detect, or specify 1-7
 ) -> Dict[str, Any]:
     """
     Orchestrates the video dubbing process with timing.
+    
+    Args:
+        speaker_count: Number of speakers for diarization. None for auto-detect.
     """
     def report_progress(step_name, status="processing"):
         if progress_callback:
@@ -55,9 +59,13 @@ def process_video(
     
     # STEP 3: Transcribe
     report_progress("Transcribing")
-    print(f"--- Step 3: Transcribing ---")
+    print(f"--- Step 3: Transcribing (Speakers: {speaker_count or 'auto'}) ---")
     t0 = time.time()
-    utterances = transcribe_audio(vocals_path, source_language=source_lang)
+    utterances = transcribe_audio(
+        vocals_path, 
+        source_language=source_lang,
+        speaker_count=speaker_count
+    )
     timings["transcribe"] = time.time() - t0
     
     # Prepare transcription segments for return

@@ -53,6 +53,26 @@
                 </div>
 
                 <div class="form-group">
+                    <label>Number of Speakers</label>
+                    <div class="select-wrapper">
+                        <select name="speaker_count">
+                            <option value="auto" selected>Auto Detect</option>
+                            <option value="1">1 Speaker</option>
+                            <option value="2">2 Speakers</option>
+                            <option value="3">3 Speakers</option>
+                            <option value="4">4 Speakers</option>
+                            <option value="5">5 Speakers</option>
+                            <option value="6">6 Speakers</option>
+                            <option value="7">7+ Speakers</option>
+                        </select>
+                    </div>
+                    <small
+                        style="color: var(--text-secondary); font-size: 0.75rem; margin-top: 0.25rem; display: block;">
+                        <i class="fas fa-info-circle"></i> Helps improve speaker separation accuracy
+                    </small>
+                </div>
+
+                <div class="form-group">
                     <label>Upload Media</label>
                     <div class="file-drop-area" onclick="document.getElementById('fileInput').click()">
                         <i class="fas fa-cloud-upload-alt icon-upload"></i>

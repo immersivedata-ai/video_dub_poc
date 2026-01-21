@@ -145,7 +145,8 @@ def transcribe_chunk_batch(
     client: SpeechClient, 
     local_audio_path: str, 
     recognizer_path: str,
-    bucket_name: str
+    bucket_name: str,
+    speaker_count: int = None  # None = auto, else use specified min/max
 ) -> List[Dict]:
     """
     Transcribes a chunk by uploading to GCS, running BatchRecognize, and parsing inline results.
@@ -157,11 +158,21 @@ def transcribe_chunk_batch(
     
     try:
         # 2. Batch Recognize
-        # Explicitly include features in the request config to ensure they are active
-        # and not disabled by the override.
+        # Configure diarization based on speaker_count parameter
+        if speaker_count is not None:
+            # User specified exact speaker count
+            min_speakers = max(1, speaker_count)
+            max_speakers = max(min_speakers, speaker_count + 1)  # Allow +1 flexibility
+            print(f"      Diarization: {min_speakers}-{max_speakers} speakers (user specified)")
+        else:
+            # Auto-detect: use wide range
+            min_speakers = 1
+            max_speakers = 7
+            print(f"      Diarization: Auto-detect (1-7 speakers)")
+        
         diarization_config = cloud_speech.SpeakerDiarizationConfig(
-            min_speaker_count=2, # Force at least 2 speakers to encourage splitting
-            max_speaker_count=7,
+            min_speaker_count=min_speakers,
+            max_speaker_count=max_speakers,
         )
         features = cloud_speech.RecognitionFeatures(
             diarization_config=diarization_config,
@@ -233,8 +244,20 @@ def transcribe_chunk_batch(
                             print(f"      [DEBUG] First word: '{first_word.word}', Speaker Tag: {getattr(first_word, 'speaker_tag', 'Missing')}, Label: {getattr(first_word, 'speaker_label', 'Missing')}")
 
                             for word in alternative.words:
+                                # flexible speaker ID extraction (V1 vs V2 behavior)
                                 speaker_tag = getattr(word, 'speaker_tag', 0)
-                                speaker_id = int(speaker_tag) if speaker_tag else 0
+                                speaker_label = getattr(word, 'speaker_label', None)
+                                
+                                if speaker_tag:
+                                    speaker_id = int(speaker_tag)
+                                elif speaker_label:
+                                    # speaker_label might be "1", "speaker_1", etc.
+                                    try:
+                                        speaker_id = int(str(speaker_label).replace("speaker_", ""))
+                                    except:
+                                        speaker_id = 0
+                                else:
+                                    speaker_id = 0
                                 
                                 word_start = word.start_offset.total_seconds()
                                 word_end = word.end_offset.total_seconds()
@@ -290,7 +313,8 @@ def transcribe_chunk_batch(
 def transcribe_audio(
     audio_path: str, 
     source_language: str = "multi", 
-    enable_diarization: bool = True
+    enable_diarization: bool = True,
+    speaker_count: int = None  # None = auto-detect, or specify 1-7
 ) -> List[Dict[str, Any]]:
     """
     Transcribes audio using Google Cloud Speech-to-Text v2 API (Chirp 3) via BatchRecognize.
@@ -366,7 +390,8 @@ def transcribe_audio(
                     client=client,
                     local_audio_path=chunk["path"],
                     recognizer_path=recognizer_path,
-                    bucket_name=bucket_name
+                    bucket_name=bucket_name,
+                    speaker_count=speaker_count
                 )
                 
                 # Adjust timestamps
