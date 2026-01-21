@@ -3,6 +3,7 @@ import subprocess
 import shutil
 from typing import List, Dict, Any
 from core.elevenlabs_client import ElevenLabsClient
+from core.azure_tts_client import AzureTTSClient
 
 def get_audio_duration(file_path: str) -> float:
     """Returns the duration of an audio file in seconds."""
@@ -22,9 +23,10 @@ def generate_dubbed_audio(
     background_audio_path: str,
     segments: List[Dict[str, Any]],
     output_path: str,
-    language: str = "hi", # Added language parameter
+    language: str = "hi",
     temp_dir: str = "temp_tts",
-    cleanup_temp: bool = True  # Auto-delete temp files after mixing
+    cleanup_temp: bool = True,
+    tts_provider: str = "azure"  # Options: 'elevenlabs' or 'azure'
 ) -> str:
     """
     Generates Hindi TTS using ElevenLabs and mixes with background.
@@ -34,7 +36,7 @@ def generate_dubbed_audio(
         cleanup_temp: If True, deletes temp_dir after mixing to save storage.
     """
     print("=" * 50)
-    print("STEP 6: Generating TTS (ElevenLabs) and Mixing")
+    print(f"STEP 6: Generating TTS ({tts_provider.upper()}) and Mixing")
     print("=" * 50)
     
     if not segments:
@@ -43,11 +45,14 @@ def generate_dubbed_audio(
 
     os.makedirs(temp_dir, exist_ok=True)
     
-    # Initialize ElevenLabs Client
+    # Initialize TTS Client based on provider
     try:
-        el_client = ElevenLabsClient()
+        if tts_provider.lower() == "azure":
+            tts_client = AzureTTSClient()
+        else:
+            tts_client = ElevenLabsClient()
     except Exception as e:
-        print(f"❌ Failed to init ElevenLabs: {e}")
+        print(f"❌ Failed to init {tts_provider} TTS: {e}")
         return background_audio_path
     
     tts_audio_files = []
@@ -69,7 +74,7 @@ def generate_dubbed_audio(
         try:
             # Generate TTS (blocking/sequential)
             # Pass language and speaker_id
-            audio_path = el_client.generate_dub(
+            audio_path = tts_client.generate_dub(
                 text=original_text, 
                 output_path=temp_file, 
                 speaker_id=speaker_id,

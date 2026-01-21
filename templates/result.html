@@ -4,76 +4,62 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dubbing Results - AI Video Dubber</title>
+    <title>Dubbing Complete | AI Studio</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
 
 <body>
-    <div class="container wide">
+    <div class="container">
         <header>
-            <h1>Dubbing Complete 🎉</h1>
-            <a href="/" class="back-link">← Dub Another Video</a>
+            <h1>Dubbing Complete!</h1>
+            <p>Your video has been successfully processed.</p>
         </header>
 
-        <div class="grid-layout">
-            <!-- Video Column -->
-            <div class="column video-col">
-                <div class="card">
-                    <h2>Dubbed Video ({{ target_lang }})</h2>
-                    <video controls autoplay class="video-player">
-                        <source src="{{ output_video }}" type="video/mp4">
-                        Your browser does not support the video tag.
-                    </video>
-                    <div class="download-actions">
-                        <a href="{{ output_video }}" download class="btn-secondary">Download Video</a>
-                    </div>
+        <div class="card">
+
+            <div class="video-wrapper">
+                <video controls>
+                    <source src="{{ output_video }}" type="video/mp4">
+                    Your browser does not support the video tag.
+                </video>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-item">
+                    <span class="stat-label">Source Language</span>
+                    <span class="stat-value">{{ source_lang }}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Target Language</span>
+                    <span class="stat-value">{{ target_lang }}</span>
                 </div>
             </div>
 
-            <!-- Stats & Transcript Column -->
-            <div class="column stats-col">
-                <div class="card timing-card">
-                    <h2>Performance Stats</h2>
-                    <div class="stat-grid">
-                        {% if upload_time > 0 %}
-                        <div class="stat-item">
-                            <span class="label">Upload Time</span>
-                            <span class="value">{{ "%.2f"|format(upload_time) }}s</span>
-                        </div>
-                        {% endif %}
-                        {% if download_time > 0 %}
-                        <div class="stat-item">
-                            <span class="label">Download Time</span>
-                            <span class="value">{{ "%.2f"|format(download_time) }}s</span>
-                        </div>
-                        {% endif %}
-                        <div class="stat-item highlight">
-                            <span class="label">Total Processing</span>
-                            <span class="value">{{ "%.2f"|format(timings['total_dubbing']) }}s</span>
-                        </div>
+            <!-- Hidden details for debugging/curiosity without cluttering UI -->
+            <details style="margin-bottom: 1.5rem; color: var(--text-secondary); cursor: pointer;">
+                <summary>View Debug Timings</summary>
+                <div class="stats-grid" style="margin-top: 1rem;">
+                    {% for key, val in timings.items() %}
+                    <div class="stat-item">
+                        <span class="stat-label">{{ key|title }}</span>
+                        <span class="stat-value">{{ "%.2f"|format(val) }}s</span>
                     </div>
-
-                    <details>
-                        <summary>Detailed Breakdown</summary>
-                        <ul class="breakdown-list">
-                            <li>Extraction: {{ "%.2f"|format(timings['extract_audio']) }}s</li>
-                            <li>Transcription: {{ "%.2f"|format(timings['transcribe']) }}s</li>
-                            <li>Translation: {{ "%.2f"|format(timings['translate']) }}s</li>
-                            <li>Synthesis: {{ "%.2f"|format(timings['synthesize']) }}s</li>
-                            <li>Merging: {{ "%.2f"|format(timings['merge_video']) }}s</li>
-                        </ul>
-                    </details>
+                    {% endfor %}
                 </div>
+            </details>
 
-                <div class="card transcript-card">
-                    <h2>Transcription</h2>
-                    <div class="transcript-box">
-                        <pre>{{ transcription }}</pre>
-                    </div>
-                </div>
-            </div>
+            <a href="{{ output_video }}" download class="btn-primary"
+                style="text-align: center; text-decoration: none; display: block; margin-bottom: 1rem;">
+                Download Video <i class="fas fa-download" style="margin-left: 8px;"></i>
+            </a>
+
+            <a href="/" class="btn-secondary">
+                <i class="fas fa-arrow-left" style="margin-right: 8px;"></i> Dub Another Video
+            </a>
+
         </div>
+
     </div>
 </body>
 

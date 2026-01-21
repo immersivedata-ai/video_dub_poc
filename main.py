@@ -1,9 +1,9 @@
 import os
 import time
 import shutil
-import uvicorn
+import uuid
 from fastapi import FastAPI, Request, Form, UploadFile, File
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from core.pipeline import process_video
@@ -30,7 +30,7 @@ async def read_root(request: Request):
     })
 
 @app.post("/process", response_class=HTMLResponse)
-async def process_dubbing(
+async def process_video_route(
     request: Request,
     source_lang: str = Form(...),
     target_lang: str = Form(...),
@@ -41,70 +41,77 @@ async def process_dubbing(
     download_time = 0.0
     video_path = ""
     
-    # Validation
-    if not video_file and not youtube_url:
-        return templates.TemplateResponse("index.html", {
-            "request": request,
-            "error": "Please upload a video or provide a YouTube link.",
-            "languages": SUPPORTED_LANGUAGES
-        })
-
     try:
-        if youtube_url:
-            # Handle YouTube URL
+        t0 = time.time()
+        
+        if youtube_url and youtube_url.strip():
             import yt_dlp
             print(f"Downloading YouTube URL: {youtube_url}")
-            t0 = time.time()
-            
             ydl_opts = {
                 'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
                 'outtmpl': 'input/%(title)s.%(ext)s',
                 'noplaylist': True,
             }
-            
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(youtube_url, download=True)
                 filename = ydl.prepare_filename(info)
                 video_path = filename
-            
             download_time = time.time() - t0
-            print(f"Download finished: {video_path} in {download_time:.2f}s")
             
-        elif video_file:
-            # Handle File Upload
-            t0 = time.time()
+        elif video_file and video_file.filename:
             video_path = f"input/{video_file.filename}"
             print(f"Saving uploaded file to: {video_path}")
-            
             with open(video_path, "wb") as buffer:
                 shutil.copyfileobj(video_file.file, buffer)
-            
             upload_time = time.time() - t0
-            print(f"Upload finished in {upload_time:.2f}s")
-
-        # Process Video
-        result = process_video(video_path, source_lang, target_lang)
         
-        # Prepare context for result page
-        return templates.TemplateResponse("result.html", {
-            "request": request,
+        else:
+            return templates.TemplateResponse("index.html", {
+                "request": request,
+                "languages": SUPPORTED_LANGUAGES,
+                "error": "Please upload a video or provide a YouTube URL."
+            })
+
+        # Process the video SYNCHRONOUSLY
+        print(f"Starting processing for {video_path}...")
+        
+        # We pass a simple print callback since we can't update UI in real-time easily without JS
+        def progress_callback(step, status="processing"):
+            print(f"Progress: {step} - {status}")
+
+        result = process_video(
+            video_path, 
+            source_lang, 
+            target_lang, 
+            progress_callback=progress_callback,
+            tts_provider="azure"  # Change to "elevenlabs" to use ElevenLabs TTS
+        )
+        
+        # Prepare result data
+        result_data = {
             "upload_time": upload_time,
             "download_time": download_time,
             "timings": result["timings"],
-            "transcription": result["transcription"],
+            "segments": result["transcription_segments"],
             "output_video": f"/output/{os.path.basename(result['output_video_path'])}",
             "source_lang": source_lang,
             "target_lang": target_lang
-        })
+        }
         
+        return templates.TemplateResponse("result.html", {
+            "request": request,
+            **result_data
+        })
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return templates.TemplateResponse("index.html", {
             "request": request,
-            "error": f"Error processing video: {str(e)}",
-            "languages": SUPPORTED_LANGUAGES
+            "languages": SUPPORTED_LANGUAGES,
+            "error": f"An error occurred: {str(e)}"
         })
 
 if __name__ == "__main__":
+    import uvicorn
     uvicorn.run("main:app", host="127.0.0.1", port=5000, reload=True)

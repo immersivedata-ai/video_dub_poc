@@ -213,6 +213,7 @@ Return ONLY the JSON array, no other text."""
             original_id = seg.get("start")
             new_seg = seg.copy()
             if original_id in translated_segments_map:
+                new_seg["original_transcript"] = new_seg.get("transcript", "")
                 new_seg["transcript"] = translated_segments_map[original_id]["text"]
                 new_seg["emotion"] = translated_segments_map[original_id]["emotion"]
                 print(f"  ✅ [{original_id:.1f}s] Speaker {seg.get('speaker', 0)}: {new_seg['transcript'][:40]}...")

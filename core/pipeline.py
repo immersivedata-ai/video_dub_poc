@@ -10,16 +10,20 @@ from core.transcribe import transcribe_audio
 from core.translator import Translator, SUPPORTED_LANGUAGES
 from core.dubbing import generate_dubbed_audio
 
-def process_video(video_path: str, source_lang: str, target_lang: str) -> Dict[str, Any]:
+def process_video(
+    video_path: str, 
+    source_lang: str, 
+    target_lang: str,
+    progress_callback=None,
+    tts_provider: str = "azure"  # Options: 'elevenlabs' or 'azure'
+) -> Dict[str, Any]:
     """
     Orchestrates the video dubbing process with timing.
-    
-    Returns:
-        Dict containing:
-        - output_video_path (str)
-        - transcription (str or list)
-        - timings (dict)
     """
+    def report_progress(step_name, status="processing"):
+        if progress_callback:
+            progress_callback(step_name, status)
+
     timings = {}
     
     # Generate paths
@@ -36,51 +40,46 @@ def process_video(video_path: str, source_lang: str, target_lang: str) -> Dict[s
     start_total = time.time()
     
     # STEP 1: Extract Audio
+    report_progress("Extracting Audio")
     print(f"--- Step 1: Extracting Audio ---")
     t0 = time.time()
     extract_audio(video_path, original_audio)
     timings["extract_audio"] = time.time() - t0
     
     # STEP 2: Separate Audio
+    report_progress("Separating Voice")
     print(f"--- Step 2: Separating Audio ---")
-    # We allow this to run but maybe separation isn't strictly needing independent timing 
-    # if it's not a primary "blocking" user step? But let's track it implicitly or explicitly.
-    # The original main.py separated vocals/bg. Let's include that in "extract_audio" or separate.
-    # I'll add a 'separation' timing for clarity if desired, or bundle it.
-    # The separator.py uses demucs.
     t0 = time.time()
     vocals_path, background_path = separate_audio(original_audio)
     timings["separation"] = time.time() - t0
     
     # STEP 3: Transcribe
+    report_progress("Transcribing")
     print(f"--- Step 3: Transcribing ---")
     t0 = time.time()
     utterances = transcribe_audio(vocals_path, source_language=source_lang)
     timings["transcribe"] = time.time() - t0
     
-    # Prepare transcription text for return
-    full_transcript = []
-    for utt in utterances:
-        full_transcript.append(f"[Speaker {utt.get('speaker', 0)}] {utt['transcript']}")
-    transcription_text = "\n".join(full_transcript)
+    # Prepare transcription segments for return
+    # (Segments are translated in next step)
 
     # STEP 4: Translate
+    report_progress("Translating")
     print(f"--- Step 4: Translating ---")
     t0 = time.time()
-    # Translator expects target_language in constructor or method?
-    # Checking previous main.py: Translator(target_language=TARGET_LANGUAGE)
     translator = Translator(target_language=target_lang)
     translated_segments = translator.translate_segments(utterances)
     timings["translate"] = time.time() - t0
     
     # STEP 5: Synthesize & Mix
+    report_progress("Generating Voice")
     print(f"--- Step 5: Synthesizing & Mixing ---")
     t0 = time.time()
-    # dubbing.py: generate_dubbed_audio(background_path, segments, output_path, language=...)
-    generate_dubbed_audio(background_path, translated_segments, dubbed_audio, language=target_lang)
+    generate_dubbed_audio(background_path, translated_segments, dubbed_audio, language=target_lang, tts_provider=tts_provider)
     timings["synthesize"] = time.time() - t0
     
     # STEP 6: Merge Video
+    report_progress("Finalizing Video")
     print(f"--- Step 6: Merging Video ---")
     t0 = time.time()
     import subprocess
@@ -99,9 +98,26 @@ def process_video(video_path: str, source_lang: str, target_lang: str) -> Dict[s
     timings["merge_video"] = time.time() - t0
     
     timings["total_dubbing"] = time.time() - start_total
+    report_progress("Completed", status="done")
     
+    # --- CLEANUP ---
+    print("--- Cleanup: Removing intermediate files ---")
+    try:
+        if os.path.exists(original_audio):
+            os.remove(original_audio)
+        if os.path.exists(dubbed_audio):
+            os.remove(dubbed_audio)
+        
+        # Cleanup Demucs output: SKIPPED to allow caching for faster re-runs
+        # demucs_video_dir = os.path.dirname(vocals_path)
+        # if os.path.exists(demucs_video_dir):
+        #    shutil.rmtree(demucs_video_dir)
+            
+    except Exception as cleanup_error:
+        print(f"Warning: Cleanup failed: {cleanup_error}")
+
     return {
         "output_video_path": output_video,
-        "transcription": transcription_text,
+        "transcription_segments": translated_segments, 
         "timings": timings
     }

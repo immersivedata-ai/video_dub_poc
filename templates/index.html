@@ -1,104 +1,90 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Video Dubber</title>
+    <title>AI Voice Dubber | Studio</title>
     <link rel="stylesheet" href="/static/style.css">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Modern Fonts -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
 </head>
+
 <body>
     <div class="container">
         <header>
-            <h1>AI Video Dubber</h1>
-            <p>Translate and dub videos seamlessly with AI.</p>
+            <h1>AI Studio</h1>
+            <p>Transform your videos instantly with AI.</p>
         </header>
 
         {% if error %}
-        <div class="alert error">
-            {{ error }}
+        <div class="card" style="margin-bottom: 2rem; border-color: #ff3366;">
+            <p style="color: #ff3366; text-align: center;"><i class="fas fa-exclamation-circle"></i> {{ error }}</p>
         </div>
         {% endif %}
 
-        <form action="/process" method="post" enctype="multipart/form-data" class="glass-card">
-            
-            <div class="form-group-row">
-                <div class="form-group">
-                    <label for="source_lang">Source Language</label>
-                    <select name="source_lang" id="source_lang">
-                        <option value="multi">Auto Detect</option>
-                        {% for code, name in languages.items() %}
-                        <option value="{{ code }}">{{ name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
+        <!-- Upload Card -->
+        <div id="uploadCard" class="card">
+            <form id="uploadForm" action="/process" method="POST" enctype="multipart/form-data"
+                onsubmit="this.classList.add('processing-state');">
 
                 <div class="form-group">
-                    <label for="target_lang">Target Language</label>
-                    <select name="target_lang" id="target_lang">
-                        <option value="hi" selected>Hindi</option>
-                        {% for code, name in languages.items() %}
-                        <option value="{{ code }}">{{ name }}</option>
-                        {% endfor %}
-                    </select>
-                </div>
-            </div>
-
-            <div class="tab-container">
-                <div class="tabs">
-                    <button type="button" class="tab active" onclick="switchTab('upload')">Upload Video</button>
-                    <button type="button" class="tab" onclick="switchTab('link')">YouTube Link</button>
-                </div>
-
-                <div id="upload-tab" class="tab-content active">
-                    <div class="file-drop-area">
-                        <span class="file-msg">Drag and drop or click to select a video</span>
-                        <input type="file" name="video_file" class="file-input" accept="video/*">
+                    <label>Source Language</label>
+                    <div class="select-wrapper">
+                        <select name="source_lang">
+                            <option value="multi">Auto Detect (Universal)</option>
+                            {% for code, name in languages.items() %}
+                            <option value="{{ code }}">{{ name }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
                 </div>
 
-                <div id="link-tab" class="tab-content">
-                    <div class="form-group">
-                        <input type="url" name="youtube_url" placeholder="Paste YouTube URL here...">
+                <div class="form-group">
+                    <label>Target Language</label>
+                    <div class="select-wrapper">
+                        <select name="target_lang">
+                            <option value="hi" selected>Hindi (India)</option>
+                            {% for code, name in languages.items() %}
+                            <option value="{{ code }}">{{ name }}</option>
+                            {% endfor %}
+                        </select>
                     </div>
                 </div>
-            </div>
 
-            <button type="submit" class="btn-primary" onclick="showLoader()">Dub Video</button>
-        </form>
+                <div class="form-group">
+                    <label>Upload Media</label>
+                    <div class="file-drop-area" onclick="document.getElementById('fileInput').click()">
+                        <i class="fas fa-cloud-upload-alt icon-upload"></i>
+                        <span id="fileMsg">Click to upload video</span>
+                        <input type="file" name="video_file" id="fileInput" class="file-input" accept="video/*"
+                            onchange="document.getElementById('fileMsg').textContent = this.files[0].name">
+                    </div>
+                </div>
 
-        <div id="loader" class="loader-container hidden">
-            <div class="spinner"></div>
-            <p>Processing video... this may take a while.</p>
+                <div class="form-group">
+                    <div
+                        style="text-align: center; margin: 1rem 0; color: var(--text-secondary); font-size: 0.8rem; position: relative;">
+                        <span style="background: var(--glass-bg); padding: 0 10px;">OR PASTE LINK</span>
+                    </div>
+                    <div class="url-input-container">
+                        <i class="fab fa-youtube url-icon"></i>
+                        <input type="url" name="youtube_url" placeholder="https://youtube.com/...">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary">
+                    <span class="btn-text">Generate Dubbing</span>
+                    <i class="fas fa-spinner fa-spin loader"></i>
+                </button>
+            </form>
         </div>
+
+        <p style="text-align: center; margin-top: 2rem; color: var(--text-secondary); font-size: 0.8rem; opacity: 0.6;">
+            Powered by Gemini & Advanced TTS Models
+        </p>
+
     </div>
-
-    <!-- Minimal JS for Tabs (allowed as per constraint 'No JavaScript for logic', this is just UI toggling) -->
-    <!-- Ideally we should do this with CSS :target or radio buttons if strict NO JS is required -->
-    <!-- User said 'No JavaScript' logic, but some UI interactivity is usually expected. -->
-    <!-- Strict interpretation: Removing JS and using CSS or separate forms? -->
-    <!-- The user prompted 'No JavaScript' likely means no frontend framework logic (React/Vue). -->
-    <!-- I will add a tiny script for tabs/loader UX, or I can rely on a simpler single-column layout if strictly forbidden. -->
-    <!-- I will stick to a very simple script just for UI switching, or check if I can do without. -->
-    <!-- To be safe, I'll include the script but keep it minimal. If strict no-js is needed, I'd use checkbox hack. -->
-    <script>
-        function switchTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            if(tab === 'upload') {
-                document.querySelector('.tabs button:nth-child(1)').classList.add('active');
-                document.getElementById('upload-tab').classList.add('active');
-            } else {
-                document.querySelector('.tabs button:nth-child(2)').classList.add('active');
-                document.getElementById('link-tab').classList.add('active');
-            }
-        }
-
-        function showLoader() {
-            document.querySelector('.loader-container').classList.remove('hidden');
-            document.querySelector('form').style.opacity = '0.5';
-        }
-    </script>
 </body>
+
 </html>

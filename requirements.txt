@@ -13,3 +13,4 @@ uvicorn
 jinja2
 python-multipart
 yt-dlp
+azure-cognitiveservices-speech
