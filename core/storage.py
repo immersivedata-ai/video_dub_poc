@@ -1,5 +1,6 @@
 import os
 import io
+import json
 from pathlib import Path
 from typing import Optional
 from google.cloud import storage
@@ -9,13 +10,16 @@ from core.config import GCS_BUCKET
 _client: Optional[storage.Client] = None
 _signer: Optional[service_account.Credentials] = None
 
-SIGNER_KEY = os.getenv("SIGNER_KEY_PATH", "")
-
 
 def _get_signer():
     global _signer
-    if _signer is None and SIGNER_KEY and os.path.exists(SIGNER_KEY):
-        _signer = service_account.Credentials.from_service_account_file(SIGNER_KEY)
+    if _signer is None:
+        key_json = os.getenv("SIGNER_KEY", "")
+        if key_json:
+            _signer = service_account.Credentials.from_service_account_info(
+                json.loads(key_json),
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
     return _signer
 
 

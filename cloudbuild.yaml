@@ -29,8 +29,8 @@ steps:
       - '--max-instances=5'
       - '--allow-unauthenticated'
       - '--service-account=cloudrun-sa@prachi-poc-478711.iam.gserviceaccount.com'
-      - '--set-env-vars=STORAGE_DIR=/tmp,GCS_BUCKET=${_GCS_BUCKET},MAX_UPLOAD_MB=500'
-      - '--set-secrets=SIGNER_KEY_PATH=/sa-key.json:sa-key:latest'
+      - '--set-env-vars=STORAGE_DIR=/tmp,GCS_BUCKET=${_GCS_BUCKET}'
+      - '--update-secrets=SIGNER_KEY=sa-key:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
