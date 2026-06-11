@@ -1,9 +1,10 @@
 import os
 import subprocess
-import shutil
 from typing import List, Dict, Any
 from core.elevenlabs_client import ElevenLabsClient
-from core.azure_tts_client import AzureTTSClient
+from core.logger import get_logger
+
+log = get_logger("dubbing")
 
 def get_audio_duration(file_path: str) -> float:
     """Returns the duration of an audio file in seconds."""
@@ -23,97 +24,78 @@ def generate_dubbed_audio(
     background_audio_path: str,
     segments: List[Dict[str, Any]],
     output_path: str,
-    language: str = "hi",
     temp_dir: str = "temp_tts",
-    cleanup_temp: bool = True,
-    tts_provider: str = "azure"  # Options: 'elevenlabs' or 'azure'
+    gender_map: Dict[int, str] = None
 ) -> str:
     """
     Generates Hindi TTS using ElevenLabs and mixes with background.
     Processes segments SEQUENTIALLY to respect API concurrency limits.
-    
-    Args:
-        cleanup_temp: If True, deletes temp_dir after mixing to save storage.
     """
-    print("=" * 50)
-    print(f"STEP 6: Generating TTS ({tts_provider.upper()}) and Mixing")
-    print("=" * 50)
+    log.info("Generating dubbed audio: %d segments", len(segments))
     
     if not segments:
-        print("No segments to dub.")
+        log.warning("No segments to dub")
         return background_audio_path
 
     os.makedirs(temp_dir, exist_ok=True)
     
-    # Initialize TTS Client based on provider
     try:
-        if tts_provider.lower() == "azure":
-            tts_client = AzureTTSClient()
-        else:
-            tts_client = ElevenLabsClient()
+        el_client = ElevenLabsClient(gender_map=gender_map or {})
     except Exception as e:
-        print(f"❌ Failed to init {tts_provider} TTS: {e}")
+        log.error("Failed to init ElevenLabs: %s", e)
         return background_audio_path
     
-    tts_audio_files = []
-    print(f"Processing {len(segments)} segments sequentially...")
+    tts_files = []
+    log.info("Processing %d segments sequentially", len(segments))
     
-    for i, seg in enumerate(segments):
-        start_time = seg.get("start", 0)
-        original_text = seg.get("transcript", "")
-        # Use simple mapping for speaker ID if available, else 0
-        speaker_id = seg.get("speaker", 0) 
-        target_duration = seg.get("end", 0.0) - seg.get("start", 0.0)
+    for i, segment in enumerate(segments):
+        text = segment.get("transcript", "").strip()
+        speaker_id = segment.get("speaker", 0)
+        target_duration = segment.get("end", 0.0) - segment.get("start", 0.0)
+        start_time = segment.get("start", 0.0)
         
-        # Skip empty segments
-        if not original_text.strip():
+        if not text:
             continue
             
-        temp_file = os.path.join(temp_dir, f"segment_{i}_{start_time}.mp3")
+        tts_filename = os.path.join(temp_dir, f"segment_{i}.mp3")
         
         try:
             # Generate TTS (blocking/sequential)
-            # Pass language and speaker_id
-            audio_path = tts_client.generate_dub(
-                text=original_text, 
-                output_path=temp_file, 
-                speaker_id=speaker_id,
-                language=language
-            )
+            el_client.generate_dub(text, tts_filename, speaker_id=speaker_id)
             
-            if not os.path.exists(temp_file):
+            if not os.path.exists(tts_filename):
                 continue
             
             # Duration Sync check
-            current_duration = get_audio_duration(temp_file)
-            final_segment_path = temp_file
+            current_duration = get_audio_duration(tts_filename)
+            final_segment_path = tts_filename
             
             # Speed up if TTS is longer than original slot
             if current_duration > target_duration * 1.05 and target_duration > 0.5:
                 speed_factor = min(current_duration / target_duration, 1.3)
                 
-                speed_filename = temp_file.replace(".mp3", "_fast.mp3")
+                speed_filename = tts_filename.replace(".mp3", "_fast.mp3")
                 subprocess.run([
-                    "ffmpeg", "-y", "-i", temp_file,
+                    "ffmpeg", "-y", "-i", tts_filename,
                     "-filter:a", f"atempo={speed_factor}",
                     "-vn", speed_filename
                 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                 
                 if os.path.exists(speed_filename):
                     final_segment_path = speed_filename
-        
-            tts_audio_files.append({"path": final_segment_path, "start": start_time})
-        
-        except Exception as e:
-            print(f"  ❌ Segment {i} failed: {e}")
 
-    if not tts_audio_files:
-        print("No TTS generated.")
+            tts_files.append({"path": final_segment_path, "start": start_time})
+
+        except Exception as e:
+            log.error("Segment %d failed: %s", i, e)
+
+    if not tts_files:
+        log.warning("No TTS generated")
         return background_audio_path
 
     # Build FFmpeg mix command
     cmd = ["ffmpeg", "-y", "-i", background_audio_path]
-    for tts in tts_audio_files:
+    for tts in tts_files:
         cmd.extend(["-i", tts["path"]])
 
     filter_complex = []
@@ -121,20 +103,17 @@ def generate_dubbed_audio(
     
     filter_complex.append("[0:a]aformat=sample_rates=44100:channel_layouts=stereo[bg]")
 
-    for i, tts in enumerate(tts_audio_files):
+    for i, tts in enumerate(tts_files):
         delay_ms = int(tts["start"] * 1000)
         chain = f"[{i+1}:a]aformat=sample_rates=44100:channel_layouts=stereo,adelay={delay_ms}|{delay_ms}[tts{i}]"
         filter_complex.append(chain)
         dialogue_inputs.append(f"[tts{i}]")
 
     mix_str = "".join(dialogue_inputs)
-    # CRITICAL: normalize=0 prevents amix from dividing volume by number of inputs
-    # Without this, each segment's volume = 1/N where N = total segments, causing very low audio
-    # that increases as segments finish playing
-    filter_complex.append(f"{mix_str}amix=inputs={len(tts_audio_files)}:dropout_transition=0:normalize=0[dialogue]")
-    filter_complex.append("[bg]volume=0.4[bg_quiet]")  # Background slightly lower
-    filter_complex.append("[dialogue]volume=2.5[dialogue_loud]")  # Dialogue boost (normalized now, so less needed)
-    filter_complex.append("[bg_quiet][dialogue_loud]amix=inputs=2:duration=first:dropout_transition=0:normalize=0[out]")
+    filter_complex.append(f"{mix_str}amix=inputs={len(tts_files)}:dropout_transition=0[dialogue]")
+    filter_complex.append("[bg]volume=0.5[bg_quiet]")  # Reduced from 0.6
+    filter_complex.append("[dialogue]volume=3.0[dialogue_loud]")  # Increased from 2.0
+    filter_complex.append("[bg_quiet][dialogue_loud]amix=inputs=2:duration=first:dropout_transition=0[out]")
 
     full_filter = ";".join(filter_complex)
     
@@ -146,18 +125,8 @@ def generate_dubbed_audio(
         output_path
     ])
 
-    print("Mixing audio...")
+    log.info("Mixing audio...")
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    print(f"✅ Dubbed audio saved: {output_path}")
-    
-    # Cleanup temp TTS files to save storage
-    if cleanup_temp and os.path.exists(temp_dir):
-        try:
-            shutil.rmtree(temp_dir)
-            print(f"🧹 Cleaned up temp files: {temp_dir}")
-        except Exception as e:
-            print(f"⚠️ Could not cleanup temp dir: {e}")
-    
+    log.info("Dubbed audio saved: %s", output_path)
     return output_path
-

@@ -1,93 +1,129 @@
 import os
 import time
-from typing import Optional
+from typing import Optional, Dict, Any
 from elevenlabs.client import ElevenLabs
-from dotenv import load_dotenv
+from core.config import ELEVENLABS_API_KEY
+from core.logger import get_logger
 
-# Load env variables
-load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
+log = get_logger("elevenlabs")
+
+_credits_cache: Dict[str, Any] = {}
+_credits_ts: float = 0
+
+
+def get_credits() -> Dict[str, Any]:
+    """Returns ElevenLabs usage info: character_limit, character_count, remaining."""
+    global _credits_cache, _credits_ts
+    now = time.time()
+    if _credits_cache and (now - _credits_ts) < 60:
+        return _credits_cache
+
+    api_key = ELEVENLABS_API_KEY
+    if not api_key or api_key == "PLACEHOLDER":
+        return {"error": "No API key configured", "remaining_pct": 0}
+
+    try:
+        client = ElevenLabs(api_key=api_key)
+        sub = client.user.get_subscription()
+        limit = getattr(sub, "character_limit", 0) or 0
+        used = getattr(sub, "character_count", 0) or 0
+        remaining = max(limit - used, 0)
+        pct = round((remaining / limit * 100) if limit > 0 else 0)
+        status = getattr(sub, "status", "unknown")
+
+        _credits_cache = {
+            "limit": limit,
+            "used": used,
+            "remaining": remaining,
+            "remaining_pct": pct,
+            "status": status,
+        }
+        _credits_ts = now
+        log.info("Credits: %d/%d (%d%% remaining)", remaining, limit, pct)
+        return _credits_cache
+    except Exception as e:
+        log.error("Failed to fetch credits: %s", e)
+        return {"error": str(e), "remaining_pct": 0}
 
 class ElevenLabsClient:
-    def __init__(self):
-        self.api_key = os.getenv("ELEVENLABS_API_KEY")
+    def __init__(self, gender_map: Optional[Dict[int, str]] = None):
+        self.api_key = ELEVENLABS_API_KEY
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY not found in .env")
         
         self.client = ElevenLabs(api_key=self.api_key)
-        
-        # Best model for dubbing: high quality + emotion + Hindi support
         self.model_id = "eleven_multilingual_v2"
-        
-        # Cache for cloned voice IDs: {speaker_id: voice_id}
-        self.voice_map = {}
+        self.gender_map = gender_map or {}
+        self.voice_map: Dict[int, str] = {}
 
-    def get_best_voice_for_language(self, lang_code: str) -> str:
-        """
-        Returns an optimized voice ID for the given language code.
-        Uses 2026 recommended native voices for Indian languages.
-        """
-        # Map internal codes to specific ElevenLabs Voice IDs
-        # Recommendations for 2026 (Native Indian Voices)
-        voice_map = {
-            "hi": "21m00Tcm4TlvDq8ikWAM", # Rachel (High quality Hindi)
-            "ta": "onwK4e9ZLuTAKqWW03F9", # Daniel (Good for Dravidian)
-            "te": "onwK4e9ZLuTAKqWW03F9", # Daniel (Telugu)
-            "kn": "onwK4e9ZLuTAKqWW03F9", # Daniel (Kannada)
-            "ml": "onwK4e9ZLuTAKqWW03F9", # Daniel (Malayalam)
-            "bn": "cgSgspJ2msm6clMCkdW9", # Antoni (Bengali)
-            "mr": "21m00Tcm4TlvDq8ikWAM", # Rachel (Marathi)
-            "gu": "21m00Tcm4TlvDq8ikWAM", # Rachel (Gujarati) 
-            "pa": "21m00Tcm4TlvDq8ikWAM", # Rachel (Punjabi - uses Hindi phonemes effectively)
-        }
-        
-        # Fallback to Aria (Universal V3 optimized)
-        return voice_map.get(lang_code, "9BWtsRjCglG6f8yz97TT")
+        # Voice pools — each unique speaker of the same gender gets a different voice
+        self.voice_pool_male = [
+            "JBFqnCBsd6RMkjVDRZzb",   # George
+            "pNInz6obpgDQGcFmaJgB",   # Adam
+            "ErXwobaYiN019PkySvjV",   # Antoni
+            "TxGEqnHWrfWFTfGW9XjX",   # Josh
+            "VR6AewLTigWG4xSOukaG",   # Arnold
+            "yoZ06aMxZJJ28mfd3POQ",   # Sam
+        ]
+        self.voice_pool_female = [
+            "EXAVITQu4vr4xnSDxMaL",   # Sarah
+            "XB0fDUnXU5powFXDhCwa",   # Bella
+            "21m00Tcm4TlvDq8ikWAM",   # Rachel
+            "ThT5KcBeYPX3keUQqHPh",   # Dorothy
+            "LcfcDJNUP1GQjkzn1xUU",   # Emily
+            "cgSgspJ2msm6clMCkdW9",   # Grace
+        ]
 
-    def generate_dub(self, text: str, output_path: str, speaker_id: int = 0, language: str = "hi") -> str:
-        """
-        Generates audio for the given text using the new v1.0+ SDK syntax.
-        Automatically selects the best model and voice for the target language.
-        """
+        # Track which pool index each gender group is at
+        self._male_idx = 0
+        self._female_idx = 0
+
+    def get_voice_id(self, speaker_id: int) -> str:
+        """Assigns a unique voice per speaker, respecting detected gender."""
+        if speaker_id in self.voice_map:
+            return self.voice_map[speaker_id]
+
+        gender = self.gender_map.get(speaker_id)
+        # Determine gender: explicit > heuristic (even=male, odd=female)
+        if gender == "female":
+            is_female = True
+        elif gender == "male":
+            is_female = False
+        else:
+            is_female = speaker_id % 2 != 0
+
+        # Assign next unique voice from the appropriate pool
+        if is_female:
+            pool = self.voice_pool_female
+            idx = self._female_idx
+            self._female_idx += 1
+        else:
+            pool = self.voice_pool_male
+            idx = self._male_idx
+            self._male_idx += 1
+
+        voice_id = pool[idx % len(pool)]
+        self.voice_map[speaker_id] = voice_id
+        log.info("Assigned voice %s for speaker %d (%s)", voice_id[:8], speaker_id, "female" if is_female else "male")
+        return voice_id
+
+    def generate_dub(self, text: str, output_path: str, speaker_id: int = 0) -> str:
         if not text:
             return ""
 
-        print(f"  🗣️  ElevenLabs | Speaker {speaker_id} | Lang: {language} | {text[:30]}...")
-        
-        # Dynamic Voice Selection
-        voice_id = self.get_best_voice_for_language(language)
-        
-        # Override with specific speaker mapping/clones if available
-        # (Simple male/female toggle for demo if standard voice isn't forced)
-        if speaker_id % 2 == 0 and language == "en": 
-             voice_id = "JBFqnCBsd6RMkjVDRZzb" # George (Male) for English
-        
-        # Override with cloned voice if available
-        if speaker_id in self.voice_map:
-            voice_id = self.voice_map[speaker_id]
-
-        # Dynamic Model Selection
-        # Use v3_alpha for regional languages (better script support), v2 for others
-        if language in ["or", "as", "mr", "bn"]:
-             model_to_use = "eleven_turbo_v2_5" # Or "eleven_flash_v2_5" for speed if available, v2.5 supports many indian langs now
-        elif language in ["hi", "ta"]:
-             model_to_use = "eleven_turbo_v2_5" # Turbo 2.5 is best for Hindi/Tamil latency
-        else:
-             model_to_use = "eleven_multilingual_v2"
-
+        voice_id = self.get_voice_id(speaker_id)
+        log.info("TTS | speaker=%d | %s...", speaker_id, text[:50])
+            
         try:
+            # --- FIX STARTS HERE ---
             # Replaced self.client.generate() with self.client.text_to_speech.convert()
             audio_generator = self.client.text_to_speech.convert(
                 text=text,
-                voice_id=voice_id,
-                model_id=model_to_use, 
-                output_format="mp3_44100_128",
-                voice_settings={
-                    "stability": 0.5,
-                    "similarity_boost": 0.75,
-                    "style": 0.5,
-                    "use_speaker_boost": True
-                }
+                voice_id=voice_id,       # Renamed from 'voice'
+                model_id=self.model_id,  # Renamed from 'model'
+                output_format="mp3_44100_128" # Optional: Ensures standard MP3 format
             )
+            # --- FIX ENDS HERE ---
             
             # Save to file
             os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -103,5 +139,5 @@ class ElevenLabsClient:
             return output_path
             
         except Exception as e:
-            print(f"  ❌ ElevenLabs Failed: {e}")
+            log.error("ElevenLabs TTS failed: %s", e)
             raise e

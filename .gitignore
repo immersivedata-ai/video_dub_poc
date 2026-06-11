@@ -1,2 +1,9 @@
 .env
-solar-quote-sa-key-new.json
+gcloud-sa.json
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+audio/
+output/
+temp_tts/

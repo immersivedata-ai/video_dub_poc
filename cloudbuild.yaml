@@ -1,0 +1,41 @@
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
+      - '-t'
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:latest'
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - push
+      - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - '--image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
+      - '--platform=managed'
+      - '--region=${_REGION}'
+      - '--memory=4Gi'
+      - '--cpu=2'
+      - '--timeout=3600'
+      - '--concurrency=3'
+      - '--max-instances=5'
+      - '--allow-unauthenticated'
+      - '--service-account=cloudrun-sa@prachi-poc-478711.iam.gserviceaccount.com'
+      - '--set-env-vars=STORAGE_DIR=/tmp,GCS_BUCKET=${_GCS_BUCKET},MAX_UPLOAD_MB=500'
+
+images:
+  - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
+
+substitutions:
+  _SERVICE: dubbing-studio
+  _REGION: us-central1
+  _REPOSITORY: dubbing-studio
+  _GCS_BUCKET: dubbing-studio-output

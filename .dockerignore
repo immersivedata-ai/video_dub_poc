@@ -1,0 +1,15 @@
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.env
+.env.example
+gcloud-sa.json
+audio/
+output/
+input/
+temp_tts/
+README.md

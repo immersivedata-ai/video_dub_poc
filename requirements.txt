@@ -6,11 +6,7 @@ python-dotenv
 demucs
 google-genai
 elevenlabs
-google-cloud-speech
 google-cloud-storage
 fastapi
 uvicorn
-jinja2
 python-multipart
-yt-dlp
-azure-cognitiveservices-speech
