@@ -2,50 +2,38 @@ import os
 import sys
 import subprocess
 from typing import Tuple
+from core.logger import get_logger
+
+log = get_logger("separator")
 
 def separate_audio(audio_path: str, output_dir: str = "audio/separated") -> Tuple[str, str]:
-    """
-    Separates audio into vocals and background using Demucs.
-    
-    Returns:
-        Tuple of (vocals_path, background_path)
-    """
     os.makedirs(output_dir, exist_ok=True)
-    
-    print("=" * 50)
-    print("STEP 2: Separating vocals from background (Demucs)")
-    print("=" * 50)
-    print(f"Input: {audio_path}")
-    print("(This may take several minutes...)")
-    
-    # Run Demucs with MP3 output (bypasses torchaudio WAV issue on Python 3.13)
+    log.info("Separating vocals from background (Demucs)")
+    log.info("Input: %s", audio_path)
+
     cmd = [
         sys.executable, "-m", "demucs",
         "--two-stems", "vocals",
-        "--mp3",  # Save as MP3 to bypass torchcodec
+        "--mp3",
         "-o", output_dir,
         audio_path
     ]
-    
-    subprocess.run(cmd)
-    
-    # Get output paths (now .mp3)
+    log.info("Running: %s", " ".join(cmd))
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        log.error("Demucs stderr: %s", result.stderr[-500:] if result.stderr else "none")
+
     audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
     demucs_output = os.path.join(output_dir, "htdemucs", audio_basename)
-    
     vocals_path = os.path.join(demucs_output, "vocals.mp3")
     background_path = os.path.join(demucs_output, "no_vocals.mp3")
-    
-    # Verify files exist
+
     if os.path.exists(vocals_path) and os.path.exists(background_path):
-        print(f"[OK] Vocals extracted: {vocals_path}")
-        print(f"[OK] Background extracted: {background_path}")
+        log.info("Vocals: %s", vocals_path)
+        log.info("Background: %s", background_path)
         return vocals_path, background_path
-    else:
-        print(f"[FAIL] Separation failed. Files not found.")
-        print(f"   Expected vocals: {vocals_path}")
-        print(f"   Expected background: {background_path}")
-        # List what was actually created
-        if os.path.exists(demucs_output):
-            print(f"   Found files: {os.listdir(demucs_output)}")
-        raise FileNotFoundError("Demucs separation failed")
+
+    log.error("Separation failed. Expected: %s / %s", vocals_path, background_path)
+    if os.path.exists(demucs_output):
+        log.error("Found files: %s", os.listdir(demucs_output))
+    raise FileNotFoundError("Demucs separation failed")

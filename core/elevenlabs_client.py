@@ -3,6 +3,9 @@ import time
 from typing import Optional
 from elevenlabs.client import ElevenLabs
 from core.config import ELEVENLABS_API_KEY
+from core.logger import get_logger
+
+log = get_logger("elevenlabs")
 
 class ElevenLabsClient:
     def __init__(self):
@@ -25,11 +28,11 @@ class ElevenLabsClient:
         if not text:
             return ""
 
-        print(f"  [TTS] ElevenLabs | Speaker {speaker_id} | {text[:40]}...")
+        log.info("TTS | speaker=%d | %s...", speaker_id, text[:50])
         
         # Default fallback voices (Public IDs from ElevenLabs library)
-        default_male = "JBFqnCBsd6RMkjVDRZzb"  # George
-        default_female = "HP3OkBOPWanmqpjL7XVM"  # Sarah
+        default_male = "JBFqnCBsd6RMkjVDRZzb"
+        default_female = "HP3OkBOPWanmqpjL7XVM"
         
         voice_id = default_male if speaker_id % 2 == 0 else default_female
         
@@ -62,5 +65,5 @@ class ElevenLabsClient:
             return output_path
             
         except Exception as e:
-            print(f"  [FAIL] ElevenLabs Failed: {e}")
+            log.error("ElevenLabs TTS failed: %s", e)
             raise e

@@ -6,6 +6,7 @@ python-dotenv
 demucs
 google-genai
 elevenlabs
+google-cloud-storage
 fastapi
 uvicorn
 python-multipart

@@ -5,6 +5,24 @@ from google.oauth2 import service_account
 import google.auth
 from typing import List, Dict, Any
 from core.config import GOOGLE_APPLICATION_CREDENTIALS
+from core.logger import get_logger
+
+log = get_logger("translator")
+
+# Map ISO 639-1 codes <-> full language names
+LANG_MAP = {
+    "hi": "hindi", "en": "english", "ta": "tamil", "te": "telugu",
+    "bn": "bengali", "mr": "marathi", "gu": "gujarati", "kn": "kannada",
+    "ml": "malayalam", "pa": "punjabi", "ur": "urdu", "or": "odia",
+    "as": "assamese", "es": "spanish", "fr": "french", "de": "german",
+    "zh": "chinese", "ja": "japanese", "ko": "korean", "pt": "portuguese",
+    "ar": "arabic", "ru": "russian", "it": "italian",
+}
+
+def _normalize_lang(lang: str) -> str:
+    """Normalize language to lowercase full name (e.g. 'hi' -> 'hindi', 'Hindi' -> 'hindi')."""
+    lang = lang.lower().strip()
+    return LANG_MAP.get(lang, lang)
 
 class Translator:
     def __init__(self):
@@ -18,11 +36,14 @@ class Translator:
             sa_path = os.path.join(os.getcwd(), sa_path)
 
         if os.path.exists(sa_path):
-            credentials = service_account.Credentials.from_service_account_file(sa_path)
+            credentials = service_account.Credentials.from_service_account_file(
+                sa_path,
+                scopes=["https://www.googleapis.com/auth/cloud-platform"]
+            )
+            log.info("Using service account: %s", sa_path)
         else:
             credentials, project = google.auth.default()
-            if not project:
-                project = "prachi-poc-478711"
+            log.info("Using ADC (Application Default Credentials)")
 
         self.client = genai.Client(
             vertexai=True,
@@ -32,18 +53,23 @@ class Translator:
         )
         self.model_id = 'gemini-2.5-flash'
 
-    def translate_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def translate_segments(self, segments: List[Dict[str, Any]], source_lang: str = "en", target_lang: str = "Hindi") -> List[Dict[str, Any]]:
         """
-        Translates a list of dialogue segments from English to Hindi using Gemini.
-        Also detects emotion (happy, sad, angry, fearful, neutral).
-        Preserves speaker context and structure.
+        Translates dialogue segments from source language to target language using Gemini.
+        Also detects emotion. If source == target, returns segments unchanged.
         """
         if not segments:
             return []
 
-        print(f"Translating {len(segments)} segments with Gemini (Context + Emotion)...")
-        
-        # Prepare the prompt structure
+        # Skip translation if source and target are the same
+        src = _normalize_lang(source_lang)
+        tgt = _normalize_lang(target_lang)
+        if src == tgt:
+            log.info("Source (%s) matches target (%s) — skipping translation", src, tgt)
+            return segments
+
+        log.info("Translating %d segments %s -> %s", len(segments), src, tgt)
+
         simplified_segments = []
         for seg in segments:
             simplified_segments.append({
@@ -54,12 +80,12 @@ class Translator:
 
         prompt = f"""
         You are a professional dubbing translator.
-        Translate the English segments to Hindi and detect the emotion.
-        
+        Translate these segments from {source_lang} to natural conversational {target_lang} and detect the emotion.
+
         Rules:
         1. Return a JSON list of objects.
         2. Preserve 'id' and 'speaker' exactly.
-        3. Translate 'text' to natural conversational Hindi.
+        3. Translate 'text' to natural conversational {target_lang}.
         4. Add an 'emotion' field: "neutral", "happy", "sad", "angry", "fearful", "surprised".
         5. Use context to determine the best translation and emotion.
 
@@ -83,6 +109,7 @@ class Translator:
                 result_text = result_text[:-3]
             
             translated_data = json.loads(result_text)
+            log.info("Translation successful: %d items", len(translated_data))
             
             # Map back to original segments structure
             # Create a map of start_time -> {text, emotion}
@@ -102,6 +129,7 @@ class Translator:
             return final_segments
 
         except Exception as e:
+            log.error("Gemini translation failed: %s", e)
             print(f"[FAIL] Gemini Translation Failed: {e}")
             # Fallback: Return original segments if failure
             print("Fallback: Returning original English segments.")

@@ -2,6 +2,9 @@ import os
 import subprocess
 from typing import List, Dict, Any
 from core.elevenlabs_client import ElevenLabsClient
+from core.logger import get_logger
+
+log = get_logger("dubbing")
 
 def get_audio_duration(file_path: str) -> float:
     """Returns the duration of an audio file in seconds."""
@@ -27,12 +30,10 @@ def generate_dubbed_audio(
     Generates Hindi TTS using ElevenLabs and mixes with background.
     Processes segments SEQUENTIALLY to respect API concurrency limits.
     """
-    print("=" * 50)
-    print("STEP 6: Generating TTS (ElevenLabs) and Mixing")
-    print("=" * 50)
+    log.info("Generating dubbed audio: %d segments", len(segments))
     
     if not segments:
-        print("No segments to dub.")
+        log.warning("No segments to dub")
         return background_audio_path
 
     os.makedirs(temp_dir, exist_ok=True)
@@ -41,11 +42,11 @@ def generate_dubbed_audio(
     try:
         el_client = ElevenLabsClient()
     except Exception as e:
-        print(f"[FAIL] Failed to init ElevenLabs: {e}")
+        log.error("Failed to init ElevenLabs: %s", e)
         return background_audio_path
     
     tts_files = []
-    print(f"Processing {len(segments)} segments sequentially...")
+    log.info("Processing %d segments sequentially", len(segments))
     
     for i, segment in enumerate(segments):
         text = segment.get("transcript", "").strip()
@@ -86,10 +87,10 @@ def generate_dubbed_audio(
             tts_files.append({"path": final_segment_path, "start": start_time})
 
         except Exception as e:
-            print(f"  [FAIL] Segment {i} failed: {e}")
+            log.error("Segment %d failed: %s", i, e)
 
     if not tts_files:
-        print("No TTS generated.")
+        log.warning("No TTS generated")
         return background_audio_path
 
     # Build FFmpeg mix command
@@ -124,8 +125,8 @@ def generate_dubbed_audio(
         output_path
     ])
 
-    print("Mixing audio...")
+    log.info("Mixing audio...")
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    print(f"[OK] Dubbed audio saved: {output_path}")
+    log.info("Dubbed audio saved: %s", output_path)
     return output_path

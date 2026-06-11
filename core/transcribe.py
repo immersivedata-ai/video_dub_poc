@@ -1,33 +1,26 @@
-import os
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from deepgram import DeepgramClient
 from core.config import DEEPGRAM_API_KEY
+from core.logger import get_logger
 
-def transcribe_audio(audio_path: str, enable_diarization: bool = True) -> List[Dict[str, Any]]:
+log = get_logger("transcribe")
+
+def transcribe_audio(audio_path: str, enable_diarization: bool = True) -> Tuple[List[Dict[str, Any]], str]:
     """
     Transcribes a local audio file using Deepgram Nova-3
-    with speaker diarization support.
+    with auto language detection and speaker diarization.
 
-    Output format:
-    [
-        {"start": 0.0, "end": 2.5, "transcript": "Hello", "speaker": 0},
-        {"start": 2.5, "end": 5.0, "transcript": "Hi there", "speaker": 1},
-        ...
-    ]
+    Returns:
+        (segments, detected_language) — e.g. "en", "hi", "es"
     """
-    print("Transcribing audio with Deepgram...")
-    if enable_diarization:
-        print("  Speaker diarization: ENABLED")
+    log.info("Transcribing with Deepgram Nova-3 (detect_language=True, diarization=%s)", enable_diarization)
 
-    # --- Validate API Key ---
     api_key = DEEPGRAM_API_KEY
     if not api_key:
-        raise RuntimeError("DEEPGRAM_API_KEY not found. Check your .env file.")
+        raise RuntimeError("DEEPGRAM_API_KEY not found.")
 
-    # --- Initialize Deepgram Client ---
     deepgram = DeepgramClient(api_key=api_key)
 
-    # --- Read Audio File and Transcribe ---
     with open(audio_path, "rb") as audio_file:
         response = deepgram.listen.v1.media.transcribe_file(
             request=audio_file.read(),
@@ -35,60 +28,53 @@ def transcribe_audio(audio_path: str, enable_diarization: bool = True) -> List[D
             smart_format=True,
             punctuate=True,
             utterances=True,
-            diarize=enable_diarization  # Enable speaker diarization
+            diarize=enable_diarization,
+            detect_language=True
         )
+
+    # Extract detected language
+    detected_lang = "en"
+    if (response.results and response.results.channels
+            and response.results.channels[0].detected_language):
+        detected_lang = response.results.channels[0].detected_language
+    log.info("Detected language: %s", detected_lang)
 
     segments: List[Dict[str, Any]] = []
 
-    # --- Process utterances with speaker IDs ---
+    # Process utterances
     if response.results and response.results.utterances:
         for utt in response.results.utterances:
-            segment = {
+            segments.append({
                 "start": float(utt.start),
                 "end": float(utt.end),
                 "transcript": utt.transcript.strip(),
                 "speaker": int(utt.speaker) if hasattr(utt, 'speaker') else 0
-            }
-            segments.append(segment)
-        
-        # Print summary
+            })
         speakers = set(seg["speaker"] for seg in segments)
-        print(f"  [OK] Found {len(segments)} segments with {len(speakers)} speaker(s)")
-        return segments
+        log.info("Found %d segments, %d speaker(s)", len(segments), len(speakers))
+        return segments, detected_lang
 
-    # --- Fallback: paragraphs (no speaker info) ---
-    if (
-        response.results
-        and response.results.channels
-        and response.results.channels[0].alternatives
-    ):
-        alternative = response.results.channels[0].alternatives[0]
-
-        if alternative.paragraphs:
-            for para in alternative.paragraphs.paragraphs:
+    # Fallback: paragraphs
+    if (response.results and response.results.channels
+            and response.results.channels[0].alternatives):
+        alt = response.results.channels[0].alternatives[0]
+        if alt.paragraphs and alt.paragraphs.paragraphs:
+            for para in alt.paragraphs.paragraphs:
                 segments.append({
                     "start": float(para.start),
                     "end": float(para.end),
                     "transcript": " ".join(
                         sentence.text for sentence in para.sentences
                     ).strip(),
-                    "speaker": 0  # Default speaker
+                    "speaker": 0
                 })
-            return segments
+            log.info("Found %d paragraphs (fallback)", len(segments))
+            return segments, detected_lang
 
-    # --- Final fallback ---
-    if (
-        response.results
-        and response.results.channels
-        and response.results.channels[0].alternatives
-    ):
-        transcript = response.results.channels[0].alternatives[0].transcript
-        if transcript:
-            return [{
-                "start": 0.0,
-                "end": 0.0,
-                "transcript": transcript.strip(),
-                "speaker": 0
-            }]
+        # Final fallback
+        if alt.transcript and alt.transcript.strip():
+            log.info("Plain transcript: %s...", alt.transcript[:80])
+            return [{"start": 0.0, "end": 0.0, "transcript": alt.transcript.strip(), "speaker": 0}], detected_lang
 
-    return []
+    log.warning("No speech detected in audio")
+    return [], detected_lang
