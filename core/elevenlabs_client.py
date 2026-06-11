@@ -24,7 +24,7 @@ def get_credits() -> Dict[str, Any]:
 
     try:
         client = ElevenLabs(api_key=api_key)
-        sub = client.user.get_subscription()
+        sub = client.user.get()
         limit = getattr(sub, "character_limit", 0) or 0
         used = getattr(sub, "character_count", 0) or 0
         remaining = max(limit - used, 0)

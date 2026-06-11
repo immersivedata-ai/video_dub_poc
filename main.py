@@ -11,6 +11,9 @@ from fastapi import FastAPI, File, UploadFile, Request, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, FileResponse
 
 from core.config import MAX_UPLOAD_MB
+import os as _os
+CLOUD_RUN = bool(_os.getenv("K_SERVICE", ""))
+MAX_MB = min(MAX_UPLOAD_MB, 30) if CLOUD_RUN else MAX_UPLOAD_MB
 from core.audioextractor import extract_audio
 from core.separator import separate_audio
 from core.transcribe import transcribe_audio
@@ -32,7 +35,7 @@ for d in [UPLOAD_DIR, AUDIO_DIR, OUTPUT_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 jobs: dict = {}
-MAX_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+MAX_BYTES = MAX_MB * 1024 * 1024
 
 
 def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
@@ -160,8 +163,8 @@ async def upload(file: UploadFile = File(...), lang: str = "Hindi"):
     size = file.file.tell()
     file.file.seek(0)
     if size > MAX_BYTES:
-        log.warning("Upload rejected: %s (%.1f MB) exceeds max %d MB", file.filename, size / 1024 / 1024, MAX_UPLOAD_MB)
-        raise HTTPException(413, f"File too large. Max {MAX_UPLOAD_MB}MB.")
+        log.warning("Upload rejected: %s (%.1f MB) exceeds max %d MB", file.filename, size / 1024 / 1024, MAX_MB)
+        raise HTTPException(413, f"File too large. Max {MAX_MB}MB.")
 
     # Check ElevenLabs credits
     credits = get_credits()

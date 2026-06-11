@@ -8,3 +8,4 @@ GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "gc
 ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
 GCS_BUCKET = os.getenv("GCS_BUCKET", "")
 MAX_UPLOAD_MB = int(os.getenv("MAX_UPLOAD_MB", "500"))
+CLOUD_RUN_MAX_MB = 30  # Cloud Run hard request limit
