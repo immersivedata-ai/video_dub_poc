@@ -41,7 +41,7 @@ def generate_dubbed_audio(
     try:
         el_client = ElevenLabsClient()
     except Exception as e:
-        print(f"❌ Failed to init ElevenLabs: {e}")
+        print(f"[FAIL] Failed to init ElevenLabs: {e}")
         return background_audio_path
     
     tts_files = []
@@ -86,7 +86,7 @@ def generate_dubbed_audio(
             tts_files.append({"path": final_segment_path, "start": start_time})
 
         except Exception as e:
-            print(f"  ❌ Segment {i} failed: {e}")
+            print(f"  [FAIL] Segment {i} failed: {e}")
 
     if not tts_files:
         print("No TTS generated.")
@@ -127,5 +127,5 @@ def generate_dubbed_audio(
     print("Mixing audio...")
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     
-    print(f"✅ Dubbed audio saved: {output_path}")
+    print(f"[OK] Dubbed audio saved: {output_path}")
     return output_path

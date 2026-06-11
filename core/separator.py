@@ -16,7 +16,7 @@ def separate_audio(audio_path: str, output_dir: str = "audio/separated") -> Tupl
     print("STEP 2: Separating vocals from background (Demucs)")
     print("=" * 50)
     print(f"Input: {audio_path}")
-    print("⏳ This may take several minutes...")
+    print("(This may take several minutes...)")
     
     # Run Demucs with MP3 output (bypasses torchaudio WAV issue on Python 3.13)
     cmd = [
@@ -38,11 +38,11 @@ def separate_audio(audio_path: str, output_dir: str = "audio/separated") -> Tupl
     
     # Verify files exist
     if os.path.exists(vocals_path) and os.path.exists(background_path):
-        print(f"✅ Vocals extracted: {vocals_path}")
-        print(f"✅ Background extracted: {background_path}")
+        print(f"[OK] Vocals extracted: {vocals_path}")
+        print(f"[OK] Background extracted: {background_path}")
         return vocals_path, background_path
     else:
-        print(f"❌ Separation failed. Files not found.")
+        print(f"[FAIL] Separation failed. Files not found.")
         print(f"   Expected vocals: {vocals_path}")
         print(f"   Expected background: {background_path}")
         # List what was actually created

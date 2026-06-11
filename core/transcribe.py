@@ -1,10 +1,7 @@
 import os
 from typing import List, Dict, Any
-from dotenv import load_dotenv
 from deepgram import DeepgramClient
-
-# Load .env from project root safely
-load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
+from core.config import DEEPGRAM_API_KEY
 
 def transcribe_audio(audio_path: str, enable_diarization: bool = True) -> List[Dict[str, Any]]:
     """
@@ -20,10 +17,10 @@ def transcribe_audio(audio_path: str, enable_diarization: bool = True) -> List[D
     """
     print("Transcribing audio with Deepgram...")
     if enable_diarization:
-        print("  → Speaker diarization: ENABLED")
+        print("  Speaker diarization: ENABLED")
 
     # --- Validate API Key ---
-    api_key = os.getenv("DEEPGRAM_API_KEY")
+    api_key = DEEPGRAM_API_KEY
     if not api_key:
         raise RuntimeError("DEEPGRAM_API_KEY not found. Check your .env file.")
 
@@ -56,7 +53,7 @@ def transcribe_audio(audio_path: str, enable_diarization: bool = True) -> List[D
         
         # Print summary
         speakers = set(seg["speaker"] for seg in segments)
-        print(f"  ✅ Found {len(segments)} segments with {len(speakers)} speaker(s)")
+        print(f"  [OK] Found {len(segments)} segments with {len(speakers)} speaker(s)")
         return segments
 
     # --- Fallback: paragraphs (no speaker info) ---

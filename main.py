@@ -24,7 +24,7 @@ print("=" * 50)
 print("STEP 1: Extracting audio from video")
 print("=" * 50)
 extract_audio(VIDEO_PATH, ORIGINAL_AUDIO)
-print(f"✅ Audio extracted: {ORIGINAL_AUDIO}")
+print(f"[OK] Audio extracted: {ORIGINAL_AUDIO}")
 
 # ============================================================
 # STEP 2: Separate Vocals + Background (Demucs)
@@ -38,7 +38,7 @@ print("=" * 50)
 print("STEP 3: Transcribing vocals (Deepgram)")
 print("=" * 50)
 utterances = transcribe_audio(vocals_path)  # Transcribe CLEAN vocals
-print(f"✅ Got {len(utterances)} utterances")
+print(f"[OK] Got {len(utterances)} utterances")
 
 for utt in utterances[:3]:  # Show first 3
     print(f"  [{utt['start']:.1f}s - {utt['end']:.1f}s]: {utt['transcript'][:50]}...")
@@ -51,7 +51,7 @@ print("STEP 4: Translating to Hindi")
 print("=" * 50)
 translator = Translator()
 translated_segments = translator.translate_segments(utterances)
-print(f"✅ Translated {len(translated_segments)} segments")
+print(f"[OK] Translated {len(translated_segments)} segments")
 
 for seg in translated_segments[:3]:  # Show first 3
     print(f"  [{seg['start']:.1f}s]: {seg['transcript'][:50]}...")
@@ -80,6 +80,6 @@ subprocess.run([
 ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 print("=" * 50)
-print("🎬 DUBBING COMPLETE!")
+print("*** DUBBING COMPLETE! ***")
 print(f"   Output: {OUTPUT_VIDEO}")
 print("=" * 50)

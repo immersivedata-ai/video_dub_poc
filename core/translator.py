@@ -1,24 +1,31 @@
 import os
 import json
-import google.generativeai as genai
+from google import genai
+from google.oauth2 import service_account
 from typing import List, Dict, Any
-from dotenv import load_dotenv
-
-# Load environment variables
-load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
+from core.config import GOOGLE_APPLICATION_CREDENTIALS
 
 class Translator:
     def __init__(self):
         """
-        Initializes the Google Gemini Translator.
-        Requires GEMINI_API_KEY in .env file.
+        Initializes the Google Gemini Translator via Vertex AI.
+        Requires gcloud-sa.json service account key in project root.
         """
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            raise RuntimeError("GEMINI_API_KEY not found. Please add it to your .env file.")
+        sa_path = GOOGLE_APPLICATION_CREDENTIALS
+        if not os.path.isabs(sa_path):
+            sa_path = os.path.join(os.getcwd(), sa_path)
+        if not os.path.exists(sa_path):
+            raise RuntimeError(f"Service account key not found: {sa_path}")
+
+        credentials = service_account.Credentials.from_service_account_file(sa_path)
         
-        genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel('gemini-2.5-flash')
+        self.client = genai.Client(
+            vertexai=True,
+            project="prachi-poc-478711",
+            location="us-central1",
+            credentials=credentials
+        )
+        self.model_id = 'gemini-2.5-flash'
 
     def translate_segments(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -56,7 +63,10 @@ class Translator:
         """
 
         try:
-            response = self.model.generate_content(prompt)
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=prompt
+            )
             
             # Clean up response text (remove markdown code blocks if present)
             result_text = response.text.strip()
@@ -81,13 +91,13 @@ class Translator:
                     new_seg["transcript"] = translation_map[original_id]["text"]
                     new_seg["emotion"] = translation_map[original_id]["emotion"]
                 else:
-                    print(f"⚠️ Warning: Missing translation for segment starting at {original_id}")
+                    print(f"[WARN] Missing translation for segment starting at {original_id}")
                 final_segments.append(new_seg)
                 
             return final_segments
 
         except Exception as e:
-            print(f"❌ Gemini Translation Failed: {e}")
+            print(f"[FAIL] Gemini Translation Failed: {e}")
             # Fallback: Return original segments if failure
             print("Fallback: Returning original English segments.")
             return segments
@@ -97,7 +107,10 @@ class Translator:
         if not text:
             return ""
         try:
-            response = self.model.generate_content(f"Translate this to Hindi: {text}")
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=f"Translate this to Hindi: {text}"
+            )
             return response.text.strip()
         except:
             return text

@@ -4,5 +4,9 @@ sentencepiece
 deepgram-sdk
 python-dotenv
 demucs
-google-generativeai
+google-genai
 elevenlabs
+flask
+fastapi
+uvicorn
+python-multipart

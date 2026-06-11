@@ -2,14 +2,11 @@ import os
 import time
 from typing import Optional
 from elevenlabs.client import ElevenLabs
-from dotenv import load_dotenv
-
-# Load env variables
-load_dotenv(dotenv_path=os.path.join(os.getcwd(), ".env"))
+from core.config import ELEVENLABS_API_KEY
 
 class ElevenLabsClient:
     def __init__(self):
-        self.api_key = os.getenv("ELEVENLABS_API_KEY")
+        self.api_key = ELEVENLABS_API_KEY
         if not self.api_key:
             raise RuntimeError("ELEVENLABS_API_KEY not found in .env")
         
@@ -28,7 +25,7 @@ class ElevenLabsClient:
         if not text:
             return ""
 
-        print(f"  🗣️  ElevenLabs | Speaker {speaker_id} | {text[:40]}...")
+        print(f"  [TTS] ElevenLabs | Speaker {speaker_id} | {text[:40]}...")
         
         # Default fallback voices (Public IDs from ElevenLabs library)
         default_male = "JBFqnCBsd6RMkjVDRZzb"  # George
@@ -65,5 +62,5 @@ class ElevenLabsClient:
             return output_path
             
         except Exception as e:
-            print(f"  ❌ ElevenLabs Failed: {e}")
+            print(f"  [FAIL] ElevenLabs Failed: {e}")
             raise e
