@@ -29,7 +29,7 @@ steps:
       - '--max-instances=5'
       - '--allow-unauthenticated'
       - '--service-account=cloudrun-sa@prachi-poc-478711.iam.gserviceaccount.com'
-      - '--set-env-vars=STORAGE_DIR=/tmp,GCS_BUCKET=${_GCS_BUCKET},MAX_UPLOAD_MB=500'
+      - '--set-env-vars=STORAGE_DIR=/tmp,GCS_BUCKET=${_GCS_BUCKET},MAX_UPLOAD_MB=500,CLOUD_RUN_SA=cloudrun-sa@prachi-poc-478711.iam.gserviceaccount.com'
 
 options:
   logging: CLOUD_LOGGING_ONLY
