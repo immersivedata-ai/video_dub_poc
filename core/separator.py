@@ -15,7 +15,7 @@ def separate_audio(audio_path: str, output_dir: str = "audio/separated") -> Tupl
         sys.executable, "-m", "demucs",
         "--two-stems", "vocals",
         "--mp3",
-        "--segment", "10",
+        "--segment", "7",
         "-o", output_dir,
         audio_path
     ]
