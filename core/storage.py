@@ -3,23 +3,20 @@ import io
 from pathlib import Path
 from typing import Optional
 from google.cloud import storage
+from google.oauth2 import service_account
 from core.config import GCS_BUCKET
 
 _client: Optional[storage.Client] = None
-_sa_email: Optional[str] = None
+_signer: Optional[service_account.Credentials] = None
+
+SIGNER_KEY = os.getenv("SIGNER_KEY_PATH", "")
 
 
-def _get_sa_email() -> str:
-    global _sa_email
-    if _sa_email is None:
-        _sa_email = os.getenv("CLOUD_RUN_SA", "")
-        if not _sa_email:
-            # Fallback: derive from project
-            import google.auth
-            _, project = google.auth.default()
-            if project:
-                _sa_email = f"{project}-compute@developer.gserviceaccount.com"
-    return _sa_email
+def _get_signer():
+    global _signer
+    if _signer is None and SIGNER_KEY and os.path.exists(SIGNER_KEY):
+        _signer = service_account.Credentials.from_service_account_file(SIGNER_KEY)
+    return _signer
 
 
 def _get_client() -> storage.Client:
@@ -58,20 +55,20 @@ def download_to_path(gcs_path: str, local_path: str) -> str:
 
 def signed_url(gcs_path: str, expiration_minutes: int = 60) -> str:
     blob = _get_bucket().blob(gcs_path)
-    return blob.generate_signed_url(
-        expiration=expiration_minutes * 60,
-        service_account_email=_get_sa_email(),
-    )
+    signer = _get_signer()
+    kwargs = {"expiration": expiration_minutes * 60}
+    if signer:
+        kwargs["credentials"] = signer
+    return blob.generate_signed_url(**kwargs)
 
 
 def upload_signed_url(gcs_path: str, content_type: str = "video/mp4", expiration_minutes: int = 10) -> str:
     blob = _get_bucket().blob(gcs_path)
-    return blob.generate_signed_url(
-        expiration=expiration_minutes * 60,
-        method="PUT",
-        content_type=content_type,
-        service_account_email=_get_sa_email(),
-    )
+    kwargs = {"expiration": expiration_minutes * 60, "method": "PUT", "content_type": content_type}
+    signer = _get_signer()
+    if signer:
+        kwargs["credentials"] = signer
+    return blob.generate_signed_url(**kwargs)
 
 
 def exists(gcs_path: str) -> bool:
