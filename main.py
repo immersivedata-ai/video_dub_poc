@@ -376,7 +376,11 @@ HTML_TEMPLATE = """
                 // Step 2: Upload directly to GCS (bypasses Cloud Run size limit)
                 updateStatus('Uploading to cloud...', 5);
                 const up = await fetch(upload_url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'video/mp4' } });
-                if (!up.ok) throw new Error('Upload to GCS failed (status ' + up.status + ')');
+                if (!up.ok) {
+                    const errText = await up.text();
+                    console.error("GCS Upload Error:", errText);
+                    throw new Error('Upload to GCS failed (status ' + up.status + '): ' + errText);
+                }
 
                 // Step 3: Start processing
                 updateStatus('Starting pipeline...', 12);

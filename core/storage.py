@@ -6,6 +6,7 @@ from typing import Optional
 from google.cloud import storage
 from google.oauth2 import service_account
 from core.config import GCS_BUCKET
+from datetime import timedelta
 
 _client: Optional[storage.Client] = None
 _signer: Optional[service_account.Credentials] = None
@@ -59,8 +60,8 @@ def download_to_path(gcs_path: str, local_path: str) -> str:
 
 def signed_url(gcs_path: str, expiration_minutes: int = 60) -> str:
     blob = _get_bucket().blob(gcs_path)
+    kwargs = {"expiration": timedelta(minutes=expiration_minutes), "version": "v4"}
     signer = _get_signer()
-    kwargs = {"expiration": expiration_minutes * 60}
     if signer:
         kwargs["credentials"] = signer
     return blob.generate_signed_url(**kwargs)
@@ -68,7 +69,12 @@ def signed_url(gcs_path: str, expiration_minutes: int = 60) -> str:
 
 def upload_signed_url(gcs_path: str, content_type: str = "video/mp4", expiration_minutes: int = 10) -> str:
     blob = _get_bucket().blob(gcs_path)
-    kwargs = {"expiration": expiration_minutes * 60, "method": "PUT", "content_type": content_type}
+    kwargs = {
+        "expiration": timedelta(minutes=expiration_minutes),
+        "method": "PUT",
+        "content_type": content_type,
+        "version": "v4"
+    }
     signer = _get_signer()
     if signer:
         kwargs["credentials"] = signer
