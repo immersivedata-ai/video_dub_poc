@@ -30,7 +30,7 @@ steps:
       - '--allow-unauthenticated'
       - '--service-account=cloudrun-sa@prachi-poc-478711.iam.gserviceaccount.com'
       - '--set-env-vars=STORAGE_DIR=/tmp,GCS_BUCKET=${_GCS_BUCKET}'
-      - '--update-secrets=SIGNER_KEY=sa-key:latest'
+      - '--update-secrets=SIGNER_KEY=sa-key:latest,DEEPGRAM_API_KEY=deepgram-api-key:latest,ELEVENLABS_API_KEY=elevenlabs-api-key:latest'
 
 options:
   logging: CLOUD_LOGGING_ONLY
