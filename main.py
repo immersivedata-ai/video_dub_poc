@@ -3,6 +3,7 @@ import uuid
 import json
 import shutil
 import asyncio
+import signal
 import subprocess
 import threading
 from pathlib import Path
@@ -18,15 +19,17 @@ from core.dubbing import generate_dubbed_audio
 
 app = FastAPI(title="Dubbing Studio")
 
-UPLOAD_DIR = Path("input")
-AUDIO_DIR = Path("audio")
-OUTPUT_DIR = Path("output")
-TEMP_DIR = Path("temp_tts")
+# Use /tmp on Cloud Run (the only writable directory), local paths as fallback
+BASE_DIR = Path(os.getenv("STORAGE_DIR", os.getcwd()))
+UPLOAD_DIR = BASE_DIR / "input"
+AUDIO_DIR = BASE_DIR / "audio"
+OUTPUT_DIR = BASE_DIR / "output"
 
 for d in [UPLOAD_DIR, AUDIO_DIR, OUTPUT_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 jobs: dict = {}
+shutdown_event = threading.Event()
 
 
 def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
@@ -90,6 +93,11 @@ async def event_stream(job_id: str):
         if progress.get("done"):
             break
         await asyncio.sleep(0.5)
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy"}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -392,4 +400,5 @@ HTML_TEMPLATE = """
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=7860, reload=True)
+    port = int(os.getenv("PORT", "7860"))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)

@@ -2,6 +2,7 @@ import os
 import json
 from google import genai
 from google.oauth2 import service_account
+import google.auth
 from typing import List, Dict, Any
 from core.config import GOOGLE_APPLICATION_CREDENTIALS
 
@@ -9,16 +10,20 @@ class Translator:
     def __init__(self):
         """
         Initializes the Google Gemini Translator via Vertex AI.
-        Requires gcloud-sa.json service account key in project root.
+        Uses service account JSON if available, otherwise falls back to
+        Application Default Credentials (Cloud Run / GCE).
         """
         sa_path = GOOGLE_APPLICATION_CREDENTIALS
         if not os.path.isabs(sa_path):
             sa_path = os.path.join(os.getcwd(), sa_path)
-        if not os.path.exists(sa_path):
-            raise RuntimeError(f"Service account key not found: {sa_path}")
 
-        credentials = service_account.Credentials.from_service_account_file(sa_path)
-        
+        if os.path.exists(sa_path):
+            credentials = service_account.Credentials.from_service_account_file(sa_path)
+        else:
+            credentials, project = google.auth.default()
+            if not project:
+                project = "prachi-poc-478711"
+
         self.client = genai.Client(
             vertexai=True,
             project="prachi-poc-478711",
