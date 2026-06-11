@@ -53,6 +53,55 @@ class Translator:
         )
         self.model_id = 'gemini-2.5-flash'
 
+    def detect_genders(self, segments: List[Dict[str, Any]]) -> Dict[int, str]:
+        """
+        Uses Gemini to detect male/female for each speaker based on dialogue context.
+        Returns: {speaker_id: 'male'|'female'}
+        """
+        # Group dialogue samples by speaker
+        speaker_samples: Dict[int, list] = {}
+        for seg in segments:
+            sid = seg.get("speaker", 0)
+            if sid not in speaker_samples:
+                speaker_samples[sid] = []
+            speaker_samples[sid].append(seg.get("transcript", ""))
+
+        if not speaker_samples:
+            return {}
+
+        # Build prompt with dialogue snippets per speaker
+        lines = []
+        for sid, texts in speaker_samples.items():
+            sample = " ".join(texts)[:400]
+            lines.append(f"Speaker {sid}: {sample}")
+
+        prompt = (
+            "Based on the dialogue context below, determine if each speaker is male or female.\n"
+            "Consider: vocabulary, tone, pronouns used, social cues, and conversational context.\n"
+            "Return ONLY a JSON object mapping speaker ID to 'male' or 'female'.\n\n"
+            + "\n".join(lines)
+            + '\n\nExample output: {"0": "male", "1": "female"}'
+        )
+
+        try:
+            response = self.client.models.generate_content(
+                model=self.model_id,
+                contents=prompt
+            )
+            result_text = response.text.strip()
+            if result_text.startswith("```"):
+                result_text = result_text.split("```")[1]
+                if result_text.startswith("json"):
+                    result_text = result_text[4:]
+            gender_map = json.loads(result_text.strip())
+            # Ensure all values are int keys
+            gender_map = {int(k): v.lower() for k, v in gender_map.items()}
+            log.info("Detected genders: %s", gender_map)
+            return gender_map
+        except Exception as e:
+            log.warning("Gender detection failed, using default: %s", e)
+            return {}
+
     def translate_segments(self, segments: List[Dict[str, Any]], source_lang: str = "en", target_lang: str = "Hindi") -> List[Dict[str, Any]]:
         """
         Translates dialogue segments from source language to target language using Gemini.
@@ -123,16 +172,13 @@ class Translator:
                     new_seg["transcript"] = translation_map[original_id]["text"]
                     new_seg["emotion"] = translation_map[original_id]["emotion"]
                 else:
-                    print(f"[WARN] Missing translation for segment starting at {original_id}")
+                    log.warning("Missing translation for segment at %s", original_id)
                 final_segments.append(new_seg)
                 
             return final_segments
 
         except Exception as e:
             log.error("Gemini translation failed: %s", e)
-            print(f"[FAIL] Gemini Translation Failed: {e}")
-            # Fallback: Return original segments if failure
-            print("Fallback: Returning original English segments.")
             return segments
 
     def translate(self, text: str) -> str:

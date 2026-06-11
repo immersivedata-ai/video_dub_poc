@@ -24,7 +24,8 @@ def generate_dubbed_audio(
     background_audio_path: str,
     segments: List[Dict[str, Any]],
     output_path: str,
-    temp_dir: str = "temp_tts"
+    temp_dir: str = "temp_tts",
+    gender_map: Dict[int, str] = None
 ) -> str:
     """
     Generates Hindi TTS using ElevenLabs and mixes with background.
@@ -38,9 +39,8 @@ def generate_dubbed_audio(
 
     os.makedirs(temp_dir, exist_ok=True)
     
-    # Initialize ElevenLabs Client
     try:
-        el_client = ElevenLabsClient()
+        el_client = ElevenLabsClient(gender_map=gender_map or {})
     except Exception as e:
         log.error("Failed to init ElevenLabs: %s", e)
         return background_audio_path

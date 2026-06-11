@@ -18,6 +18,7 @@ from core.translator import Translator
 from core.dubbing import generate_dubbed_audio
 from core import storage
 from core.logger import get_logger
+from core.elevenlabs_client import get_credits
 
 log = get_logger("main")
 app = FastAPI(title="Dubbing Studio")
@@ -60,21 +61,27 @@ def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
         log.info("[job %s] Transcribed %d segments | source=%s", job_id, len(utterances), source_lang)
 
         progress["step"] = 4
-        progress["message"] = f"Translating {source_lang} -> {target_lang} (Gemini)..."
-        log.info("[job %s] Step 4: Translate %s -> %s", job_id, source_lang, target_lang)
+        progress["message"] = "Detecting speaker genders..."
+        log.info("[job %s] Detecting genders via Gemini", job_id)
         translator = Translator()
+        gender_map = translator.detect_genders(utterances)
+        log.info("[job %s] Gender map: %s", job_id, gender_map)
+
+        progress["step"] = 5
+        progress["message"] = f"Translating {source_lang} -> {target_lang} (Gemini)..."
+        log.info("[job %s] Translate %s -> %s", job_id, source_lang, target_lang)
         translated = translator.translate_segments(utterances, source_lang=source_lang, target_lang=target_lang)
         progress["message"] = f"Translated {len(translated)} segments"
         log.info("[job %s] Translated %d segments", job_id, len(translated))
 
-        progress["step"] = 5
-        progress["message"] = "Generating TTS and mixing audio..."
-        log.info("[job %s] Step 5: Generate TTS + mix", job_id)
-        generate_dubbed_audio(background_path, translated, dubbed_audio)
-
         progress["step"] = 6
+        progress["message"] = "Generating TTS and mixing audio..."
+        log.info("[job %s] Generate TTS + mix", job_id)
+        generate_dubbed_audio(background_path, translated, dubbed_audio, gender_map=gender_map)
+
+        progress["step"] = 7
         progress["message"] = "Merging dubbed audio with video..."
-        log.info("[job %s] Step 6: Merge audio + video", job_id)
+        log.info("[job %s] Merge audio + video", job_id)
         subprocess.run([
             "ffmpeg", "-y",
             "-i", video_path,
@@ -87,9 +94,9 @@ def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
             output_video
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
-        progress["step"] = 7
+        progress["step"] = 8
         progress["message"] = "Uploading to cloud..."
-        log.info("[job %s] Step 7: Upload to GCS", job_id)
+        log.info("[job %s] Upload to GCS", job_id)
 
         if storage.is_configured():
             gcs_path = f"dubbed/{job_id}.mp4"
@@ -136,6 +143,11 @@ async def health():
     return {"status": "healthy"}
 
 
+@app.get("/credits")
+async def credits():
+    return get_credits()
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return HTML_TEMPLATE
@@ -150,6 +162,11 @@ async def upload(file: UploadFile = File(...), lang: str = "Hindi"):
     if size > MAX_BYTES:
         log.warning("Upload rejected: %s (%.1f MB) exceeds max %d MB", file.filename, size / 1024 / 1024, MAX_UPLOAD_MB)
         raise HTTPException(413, f"File too large. Max {MAX_UPLOAD_MB}MB.")
+
+    # Check ElevenLabs credits
+    credits = get_credits()
+    if not credits.get("error") and credits.get("remaining", 0) == 0:
+        raise HTTPException(429, "ElevenLabs credits exhausted. Please top up your account.")
 
     job_id = uuid.uuid4().hex[:12]
     ext = Path(file.filename).suffix or ".mp4"
@@ -255,14 +272,20 @@ HTML_TEMPLATE = """
             <div class="relative z-10">
 
                 <!-- Header -->
-                <div class="flex items-center gap-3 mb-8">
-                    <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, rgba(69,208,189,0.12), rgba(68,182,233,0.12))">
-                        <img src="https://immersivedata.ai/wp-content/uploads/2025/08/ID_1-only-logo.svg"
-                             alt="ID" class="w-6 h-6" onerror="this.style.display='none'" />
+                <div class="flex items-center justify-between mb-8">
+                    <div class="flex items-center gap-3">
+                        <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, rgba(69,208,189,0.12), rgba(68,182,233,0.12))">
+                            <img src="https://immersivedata.ai/wp-content/uploads/2025/08/ID_1-only-logo.svg"
+                                 alt="ID" class="w-6 h-6" onerror="this.style.display='none'" />
+                        </div>
+                        <div>
+                            <h1 class="text-xl font-bold text-[#0f172a] tracking-tight leading-tight headline">Dubbing Studio</h1>
+                            <p class="text-[13px] text-[#64748b] font-medium">Powered by ImmersiveData</p>
+                        </div>
                     </div>
-                    <div>
-                        <h1 class="text-xl font-bold text-[#0f172a] tracking-tight leading-tight headline">Dubbing Studio</h1>
-                        <p class="text-[13px] text-[#64748b] font-medium">Powered by ImmersiveData</p>
+                    <div id="credits-badge" class="hidden flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold">
+                        <span id="credits-dot" class="w-2 h-2 rounded-full"></span>
+                        <span id="credits-text">Loading...</span>
                     </div>
                 </div>
 
@@ -356,6 +379,30 @@ HTML_TEMPLATE = """
 
     <script>
         let currentJobId = null;
+
+        // Fetch ElevenLabs credits on load
+        fetch('/credits').then(r => r.json()).then(c => {
+            const badge = document.getElementById('credits-badge');
+            const dot = document.getElementById('credits-dot');
+            const txt = document.getElementById('credits-text');
+            badge.classList.remove('hidden');
+            if (c.error) {
+                badge.className = 'hidden';
+                return;
+            }
+            const pct = c.remaining_pct || 0;
+            if (pct > 30) {
+                dot.className = 'w-2 h-2 rounded-full bg-green-400';
+                badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-green-50 text-green-700';
+            } else if (pct > 10) {
+                dot.className = 'w-2 h-2 rounded-full bg-amber-400';
+                badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700';
+            } else {
+                dot.className = 'w-2 h-2 rounded-full bg-red-400';
+                badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-50 text-red-700';
+            }
+            txt.textContent = pct + '% credits left';
+        }).catch(() => {});
         const dropZone = document.getElementById('drop-zone');
         dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
         dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
@@ -380,7 +427,7 @@ HTML_TEMPLATE = """
                 const p = JSON.parse(e.data);
                 if (p.error) { showError(p.error); es.close(); return; }
                 const s = p.step || 0;
-                updateStatus(p.message, Math.round((s / 7) * 100));
+                updateStatus(p.message, Math.round((s / 8) * 100));
                 for (let i = 1; i <= 6; i++) { const el = document.getElementById('step-' + i); el.classList.remove('step-active','step-done'); if (i < s) el.classList.add('step-done'); else if (i === s) el.classList.add('step-active'); }
                 if (p.done && p.output) { es.close(); document.getElementById('done-panel').classList.remove('hidden'); document.getElementById('download-link').href = '/download/' + jobId; }
             };
