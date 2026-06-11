@@ -7,13 +7,10 @@ import subprocess
 import threading
 from pathlib import Path
 
-from fastapi import FastAPI, File, UploadFile, Request, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse, FileResponse
 
 from core.config import MAX_UPLOAD_MB
-import os as _os
-CLOUD_RUN = bool(_os.getenv("K_SERVICE", ""))
-MAX_MB = min(MAX_UPLOAD_MB, 30) if CLOUD_RUN else MAX_UPLOAD_MB
 from core.audioextractor import extract_audio
 from core.separator import separate_audio
 from core.transcribe import transcribe_audio
@@ -25,22 +22,21 @@ from core.elevenlabs_client import get_credits
 
 log = get_logger("main")
 app = FastAPI(title="Dubbing Studio")
+CLOUD_RUN = bool(os.getenv("K_SERVICE", ""))
 
 BASE_DIR = Path(os.getenv("STORAGE_DIR", os.getcwd()))
 UPLOAD_DIR = BASE_DIR / "input"
 AUDIO_DIR = BASE_DIR / "audio"
 OUTPUT_DIR = BASE_DIR / "output"
-
 for d in [UPLOAD_DIR, AUDIO_DIR, OUTPUT_DIR]:
     d.mkdir(parents=True, exist_ok=True)
 
 jobs: dict = {}
-MAX_BYTES = MAX_MB * 1024 * 1024
 
 
 def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
     progress = jobs[job_id]
-    log.info("[job %s] Starting pipeline | target=%s | video=%s", job_id, target_lang, video_path)
+    log.info("[job %s] Starting pipeline | target=%s", job_id, target_lang)
     try:
         original_audio = str(AUDIO_DIR / f"original_{job_id}.wav")
         dubbed_audio = str(AUDIO_DIR / f"dubbed_{job_id}.aac")
@@ -48,59 +44,43 @@ def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
 
         progress["step"] = 1
         progress["message"] = "Extracting audio from video..."
-        log.info("[job %s] Step 1: Extract audio", job_id)
         extract_audio(video_path, original_audio)
 
         progress["step"] = 2
         progress["message"] = "Separating vocals from background (Demucs)..."
-        log.info("[job %s] Step 2: Separate vocals", job_id)
         vocals_path, background_path = separate_audio(original_audio)
 
         progress["step"] = 3
         progress["message"] = "Transcribing vocals (Deepgram)..."
-        log.info("[job %s] Step 3: Transcribe", job_id)
         utterances, source_lang = transcribe_audio(vocals_path)
         progress["message"] = f"Transcribed {len(utterances)} utterances ({source_lang})"
-        log.info("[job %s] Transcribed %d segments | source=%s", job_id, len(utterances), source_lang)
+        log.info("[job %s] Source language: %s | %d segments", job_id, source_lang, len(utterances))
 
         progress["step"] = 4
         progress["message"] = "Detecting speaker genders..."
-        log.info("[job %s] Detecting genders via Gemini", job_id)
         translator = Translator()
         gender_map = translator.detect_genders(utterances)
         log.info("[job %s] Gender map: %s", job_id, gender_map)
 
         progress["step"] = 5
         progress["message"] = f"Translating {source_lang} -> {target_lang} (Gemini)..."
-        log.info("[job %s] Translate %s -> %s", job_id, source_lang, target_lang)
         translated = translator.translate_segments(utterances, source_lang=source_lang, target_lang=target_lang)
         progress["message"] = f"Translated {len(translated)} segments"
-        log.info("[job %s] Translated %d segments", job_id, len(translated))
 
         progress["step"] = 6
         progress["message"] = "Generating TTS and mixing audio..."
-        log.info("[job %s] Generate TTS + mix", job_id)
         generate_dubbed_audio(background_path, translated, dubbed_audio, gender_map=gender_map)
 
         progress["step"] = 7
         progress["message"] = "Merging dubbed audio with video..."
-        log.info("[job %s] Merge audio + video", job_id)
         subprocess.run([
-            "ffmpeg", "-y",
-            "-i", video_path,
-            "-i", dubbed_audio,
-            "-map", "0:v:0",
-            "-map", "1:a:0",
-            "-c:v", "copy",
-            "-c:a", "copy",
-            "-shortest",
-            output_video
+            "ffmpeg", "-y", "-i", video_path, "-i", dubbed_audio,
+            "-map", "0:v:0", "-map", "1:a:0",
+            "-c:v", "copy", "-c:a", "copy", "-shortest", output_video
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         progress["step"] = 8
         progress["message"] = "Uploading to cloud..."
-        log.info("[job %s] Upload to GCS", job_id)
-
         if storage.is_configured():
             gcs_path = f"dubbed/{job_id}.mp4"
             storage.upload_file(output_video, gcs_path)
@@ -108,22 +88,16 @@ def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
             log.info("[job %s] Uploaded to GCS: %s", job_id, gcs_path)
         else:
             progress["output"] = output_video
-            log.info("[job %s] No GCS configured, serving locally", job_id)
 
-        # Clean up local temp files
+        # Cleanup
         for p in [video_path, original_audio, output_video, dubbed_audio]:
-            try:
-                os.remove(p)
-            except OSError:
-                pass
-        try:
-            shutil.rmtree(str(AUDIO_DIR / "separated"), ignore_errors=True)
-        except OSError:
-            pass
+            try: os.remove(p)
+            except OSError: pass
+        try: shutil.rmtree(str(AUDIO_DIR / "separated"), ignore_errors=True)
+        except OSError: pass
 
         progress["message"] = "Dubbing complete!"
         progress["done"] = True
-
         log.info("[job %s] Pipeline complete", job_id)
 
     except Exception as e:
@@ -134,12 +108,14 @@ def run_pipeline(job_id: str, video_path: str, target_lang: str = "Hindi"):
 
 async def event_stream(job_id: str):
     while True:
-        progress = jobs.get(job_id, {})
-        yield f"data: {json.dumps(progress)}\n\n"
-        if progress.get("done"):
+        p = jobs.get(job_id, {})
+        yield f"data: {json.dumps(p)}\n\n"
+        if p.get("done"):
             break
         await asyncio.sleep(0.5)
 
+
+# ── Endpoints ──────────────────────────────
 
 @app.get("/health")
 async def health():
@@ -151,38 +127,36 @@ async def credits():
     return get_credits()
 
 
+@app.get("/upload-url")
+async def upload_url(filename: str, content_type: str = "video/mp4"):
+    if not storage.is_configured():
+        raise HTTPException(500, "GCS not configured")
+    job_id = uuid.uuid4().hex[:12]
+    ext = Path(filename).suffix or ".mp4"
+    gcs_path = f"uploads/{job_id}{ext}"
+    url = storage.upload_signed_url(gcs_path, content_type)
+    log.info("[job %s] Issued upload URL for %s", job_id, filename)
+    return {"upload_url": url, "gcs_path": gcs_path, "job_id": job_id}
+
+
+@app.post("/process")
+async def process(gcs_path: str, lang: str = "Hindi"):
+    if not storage.is_configured():
+        raise HTTPException(500, "GCS not configured")
+
+    job_id = gcs_path.split("/")[-1].rsplit(".", 1)[0]
+    local_path = str(UPLOAD_DIR / os.path.basename(gcs_path))
+    storage.download_to_path(gcs_path, local_path)
+
+    log.info("[job %s] Downloaded from GCS: %s", job_id, gcs_path)
+    jobs[job_id] = {"step": 0, "message": "Starting...", "done": False}
+    threading.Thread(target=run_pipeline, args=(job_id, local_path, lang)).start()
+    return {"job_id": job_id}
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home():
     return HTML_TEMPLATE
-
-
-@app.post("/upload")
-async def upload(file: UploadFile = File(...), lang: str = "Hindi"):
-    # Size validation
-    file.file.seek(0, os.SEEK_END)
-    size = file.file.tell()
-    file.file.seek(0)
-    if size > MAX_BYTES:
-        log.warning("Upload rejected: %s (%.1f MB) exceeds max %d MB", file.filename, size / 1024 / 1024, MAX_MB)
-        raise HTTPException(413, f"File too large. Max {MAX_MB}MB.")
-
-    # Check ElevenLabs credits
-    credits = get_credits()
-    if not credits.get("error") and credits.get("remaining", 0) == 0:
-        raise HTTPException(429, "ElevenLabs credits exhausted. Please top up your account.")
-
-    job_id = uuid.uuid4().hex[:12]
-    ext = Path(file.filename).suffix or ".mp4"
-    video_path = str(UPLOAD_DIR / f"input_{job_id}{ext}")
-    with open(video_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    log.info("[job %s] Uploaded: %s (%.1f MB) | target=%s", job_id, file.filename, size / 1024 / 1024, lang)
-    jobs[job_id] = {"step": 0, "message": "Starting...", "done": False}
-    thread = threading.Thread(target=run_pipeline, args=(job_id, video_path, lang))
-    thread.start()
-
-    return {"job_id": job_id}
 
 
 @app.get("/progress/{job_id}")
@@ -192,18 +166,18 @@ async def progress(job_id: str):
 
 @app.get("/download/{job_id}")
 async def download(job_id: str):
-    progress = jobs.get(job_id, {})
-    output = progress.get("output")
+    p = jobs.get(job_id, {})
+    output = p.get("output")
     if not output:
         return {"error": "File not ready"}
-    # GCS signed URL — redirect; local path — serve directly
     if output.startswith("http"):
         return RedirectResponse(url=output)
     if os.path.exists(output):
-        from fastapi.responses import FileResponse
         return FileResponse(output, filename=os.path.basename(output))
     return {"error": "File not ready"}
 
+
+# ── Frontend ──────────────────────────────
 
 HTML_TEMPLATE = """
 <!DOCTYPE html>
@@ -218,17 +192,14 @@ HTML_TEMPLATE = """
         * { font-family: 'Manrope', sans-serif; }
         h1, .headline { font-family: 'Sora', sans-serif; }
         body { background: #f8fafb; }
-        .glow { box-shadow: 0 0 40px rgba(69,208,189,0.08), 0 0 80px rgba(68,182,233,0.04); }
         .gradient-border {
             border: 1px solid transparent;
             background: linear-gradient(#fff, #fff) padding-box,
                         linear-gradient(135deg, #45d0bd33, #44b6e933) border-box;
         }
         .upload-drop {
-            border: 2px dashed #d1dbe6;
-            border-radius: 20px;
-            background: #f9fbfc;
-            transition: all 0.3s ease;
+            border: 2px dashed #d1dbe6; border-radius: 20px;
+            background: #f9fbfc; transition: all 0.3s ease;
         }
         .upload-drop:hover { border-color: #45d0bd; background: #f0faf8; }
         .upload-drop.dragover { border-color: #45d0bd; background: #e6f7f4; transform: scale(1.01); }
@@ -263,23 +234,16 @@ HTML_TEMPLATE = """
     </style>
 </head>
 <body class="min-h-screen flex items-center justify-center p-5">
-
     <div class="w-full max-w-[620px]">
-
-        <div class="bg-white rounded-[28px] p-8 sm:p-10 gradient-border glow relative overflow-hidden">
-
-            <!-- Subtle bg decoration -->
+        <div class="bg-white rounded-[28px] p-8 sm:p-10 gradient-border relative overflow-hidden" style="box-shadow: 0 0 40px rgba(69,208,189,0.08), 0 0 80px rgba(68,182,233,0.04)">
             <div class="absolute top-0 right-0 w-64 h-64 rounded-full blur-3xl opacity-[0.06]" style="background: linear-gradient(135deg, #45d0bd, #44b6e9)"></div>
             <div class="absolute bottom-0 left-0 w-48 h-48 rounded-full blur-3xl opacity-[0.04]" style="background: linear-gradient(135deg, #44b6e9, #45d0bd)"></div>
-
             <div class="relative z-10">
-
                 <!-- Header -->
                 <div class="flex items-center justify-between mb-8">
                     <div class="flex items-center gap-3">
                         <div class="w-10 h-10 rounded-xl flex items-center justify-center" style="background: linear-gradient(135deg, rgba(69,208,189,0.12), rgba(68,182,233,0.12))">
-                            <img src="https://immersivedata.ai/wp-content/uploads/2025/08/ID_1-only-logo.svg"
-                                 alt="ID" class="w-6 h-6" onerror="this.style.display='none'" />
+                            <img src="https://immersivedata.ai/wp-content/uploads/2025/08/ID_1-only-logo.svg" alt="ID" class="w-6 h-6" onerror="this.style.display='none'" />
                         </div>
                         <div>
                             <h1 class="text-xl font-bold text-[#0f172a] tracking-tight leading-tight headline">Dubbing Studio</h1>
@@ -299,12 +263,12 @@ HTML_TEMPLATE = """
                             <svg class="w-8 h-8 text-[#45d0bd]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.7" d="M12 4.5v15m0 0l6.75-6.75M12 19.5l-6.75-6.75"/></svg>
                         </div>
                         <p class="text-[#1e293b] font-semibold text-[15px]">Upload your video</p>
-                        <p class="text-[#94a3b8] text-[13px] mt-1">Drag & drop or click to browse · Max 500MB · MP4, MOV, AVI</p>
-                        <input id="file-input" type="file" accept="video/*" class="hidden" onchange="startUpload(this)" />
+                        <p class="text-[#94a3b8] text-[13px] mt-1">Drag & drop or click to browse &middot; Up to 100MB &middot; MP4, MOV, AVI</p>
+                        <input id="file-input" type="file" accept="video/*" class="hidden" />
                     </label>
                 </div>
 
-                <!-- Language Selector -->
+                <!-- Language -->
                 <div id="lang-selector" class="mt-5">
                     <label class="block text-[13px] font-semibold text-[#1e293b] mb-2">Target language</label>
                     <select id="target-lang" class="w-full px-4 py-3 bg-[#f8fafb] border border-[#d1dbe6] rounded-xl text-sm text-[#1e293b] font-medium outline-none focus:border-[#45d0bd] focus:ring-3 focus:ring-[#45d0bd]/10 transition-all appearance-none cursor-pointer">
@@ -325,7 +289,6 @@ HTML_TEMPLATE = """
 
                 <!-- Progress Panel -->
                 <div id="progress-panel" class="hidden mt-6" style="animation: slideUp 0.4s ease-out">
-
                     <div class="mb-6">
                         <div class="flex items-center justify-between mb-2.5">
                             <div class="flex items-center gap-2.5">
@@ -334,9 +297,7 @@ HTML_TEMPLATE = """
                             </div>
                             <span id="progress-percent" class="text-[#45d0bd] text-sm font-bold tabular-nums">0%</span>
                         </div>
-                        <div class="progress-track">
-                            <div id="progress-bar" class="progress-fill" style="width: 0%"></div>
-                        </div>
+                        <div class="progress-track"><div id="progress-bar" class="progress-fill" style="width:0%"></div></div>
                     </div>
 
                     <div class="grid grid-cols-2 gap-2.5 mb-6">
@@ -353,10 +314,7 @@ HTML_TEMPLATE = """
                             <svg class="w-9 h-9 text-[#45d0bd]" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg>
                         </div>
                         <p class="text-[#0f172a] text-lg font-bold mb-5">Dubbing complete!</p>
-                        <a id="download-link" href="#" class="btn btn-gradient">
-                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.5v15m0 0l6.75-6.75M12 19.5l-6.75-6.75"/></svg>
-                            Download Video
-                        </a>
+                        <a id="download-link" href="#" class="btn btn-gradient"><svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.5v15m0 0l6.75-6.75M12 19.5l-6.75-6.75"/></svg>Download Video</a>
                         <button onclick="resetUI()" class="block mx-auto mt-4 text-[#64748b] hover:text-[#1e293b] text-sm font-medium transition-colors">Dub another video</button>
                     </div>
 
@@ -369,10 +327,8 @@ HTML_TEMPLATE = """
                         <button onclick="resetUI()" class="btn">Try Again</button>
                     </div>
                 </div>
-
             </div>
         </div>
-
         <p class="text-center text-[#94a3b8] text-xs mt-5">Powered by Deepgram &middot; Gemini &middot; ElevenLabs</p>
     </div>
 
@@ -383,47 +339,53 @@ HTML_TEMPLATE = """
     <script>
         let currentJobId = null;
 
-        // Fetch ElevenLabs credits on load
         fetch('/credits').then(r => r.json()).then(c => {
-            const badge = document.getElementById('credits-badge');
-            const dot = document.getElementById('credits-dot');
-            const txt = document.getElementById('credits-text');
-            badge.classList.remove('hidden');
-            if (c.error) {
-                badge.className = 'hidden';
-                return;
-            }
+            const badge = document.getElementById('credits-badge'), dot = document.getElementById('credits-dot'), txt = document.getElementById('credits-text');
+            if (c.error) return;
             const pct = c.remaining_pct || 0;
-            if (pct > 30) {
-                dot.className = 'w-2 h-2 rounded-full bg-green-400';
-                badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-green-50 text-green-700';
-            } else if (pct > 10) {
-                dot.className = 'w-2 h-2 rounded-full bg-amber-400';
-                badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700';
-            } else {
-                dot.className = 'w-2 h-2 rounded-full bg-red-400';
-                badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-50 text-red-700';
-            }
+            if (pct > 30) { dot.className = 'w-2 h-2 rounded-full bg-green-400'; badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-green-50 text-green-700'; }
+            else if (pct > 10) { dot.className = 'w-2 h-2 rounded-full bg-amber-400'; badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-amber-50 text-amber-700'; }
+            else { dot.className = 'w-2 h-2 rounded-full bg-red-400'; badge.className = 'flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold bg-red-50 text-red-700'; }
             txt.textContent = pct + '% credits left';
-        }).catch(() => {});
-        const dropZone = document.getElementById('drop-zone');
-        dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
-        dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
-        dropZone.addEventListener('drop', e => {
-            e.preventDefault(); dropZone.classList.remove('dragover');
+        }).catch(()=>{});
+
+        const dz = document.getElementById('drop-zone');
+        dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('dragover'); });
+        dz.addEventListener('dragleave', () => dz.classList.remove('dragover'));
+        dz.addEventListener('drop', e => {
+            e.preventDefault(); dz.classList.remove('dragover');
             const f = e.dataTransfer.files[0];
-            if (f) { document.getElementById('file-input').files = e.dataTransfer.files; startUpload(document.getElementById('file-input')); }
+            if (f) { document.getElementById('file-input').files = e.dataTransfer.files; startUpload(f); }
         });
-        function startUpload(input) {
-            const file = input.files[0]; if (!file) return;
+        document.getElementById('file-input').addEventListener('change', function() { if (this.files[0]) startUpload(this.files[0]); });
+
+        async function startUpload(file) {
             const lang = document.getElementById('target-lang').value;
-            const fd = new FormData(); fd.append('file', file); fd.append('lang', lang);
             document.getElementById('upload-zone').classList.add('hidden');
             document.getElementById('lang-selector').classList.add('hidden');
             document.getElementById('progress-panel').classList.remove('hidden');
-            updateStatus('Uploading...', 2);
-            fetch('/upload', { method: 'POST', body: fd }).then(r => { if (!r.ok) return r.json().then(e => { throw new Error(e.detail || 'Upload failed') }); return r.json(); }).then(d => { currentJobId = d.job_id; listenProgress(d.job_id); }).catch(e => showError(e.message));
+            updateStatus('Getting upload URL...', 0);
+
+            try {
+                // Step 1: Get signed GCS upload URL
+                const res = await fetch('/upload-url?filename=' + encodeURIComponent(file.name) + '&content_type=' + encodeURIComponent(file.type || 'video/mp4'));
+                if (!res.ok) throw new Error((await res.json()).detail || 'Failed to get upload URL');
+                const {upload_url, gcs_path, job_id} = await res.json();
+                currentJobId = job_id;
+
+                // Step 2: Upload directly to GCS (bypasses Cloud Run size limit)
+                updateStatus('Uploading to cloud...', 5);
+                const up = await fetch(upload_url, { method: 'PUT', body: file, headers: { 'Content-Type': file.type || 'video/mp4' } });
+                if (!up.ok) throw new Error('Upload to GCS failed (status ' + up.status + ')');
+
+                // Step 3: Start processing
+                updateStatus('Starting pipeline...', 12);
+                const pr = await fetch('/process?gcs_path=' + encodeURIComponent(gcs_path) + '&lang=' + encodeURIComponent(lang), { method: 'POST' });
+                if (!pr.ok) throw new Error((await pr.json()).detail || 'Failed to start processing');
+                listenProgress(job_id);
+            } catch(e) { showError(e.message); }
         }
+
         function listenProgress(jobId) {
             const es = new EventSource('/progress/' + jobId);
             es.onmessage = function(e) {
@@ -436,6 +398,7 @@ HTML_TEMPLATE = """
             };
             es.onerror = () => es.close();
         }
+
         function updateStatus(m, p) { document.getElementById('progress-text').textContent = m; document.getElementById('progress-percent').textContent = p + '%'; document.getElementById('progress-bar').style.width = p + '%'; }
         function showError(m) { document.getElementById('error-panel').classList.remove('hidden'); document.getElementById('error-text').textContent = m; }
         function resetUI() { currentJobId = null; document.getElementById('upload-zone').classList.remove('hidden'); document.getElementById('lang-selector').classList.remove('hidden'); document.getElementById('progress-panel').classList.add('hidden'); document.getElementById('done-panel').classList.add('hidden'); document.getElementById('error-panel').classList.add('hidden'); document.getElementById('file-input').value = ''; document.getElementById('progress-bar').style.width = '0%'; for (let i = 1; i <= 6; i++) document.getElementById('step-' + i).classList.remove('step-active','step-done'); }

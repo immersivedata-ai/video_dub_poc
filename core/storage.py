@@ -48,6 +48,16 @@ def signed_url(gcs_path: str, expiration_minutes: int = 60) -> str:
     return blob.generate_signed_url(expiration=expiration_minutes * 60)
 
 
+def upload_signed_url(gcs_path: str, content_type: str = "video/mp4", expiration_minutes: int = 10) -> str:
+    """Generate a signed URL for uploading a file directly to GCS."""
+    blob = _get_bucket().blob(gcs_path)
+    return blob.generate_signed_url(
+        expiration=expiration_minutes * 60,
+        method="PUT",
+        content_type=content_type,
+    )
+
+
 def exists(gcs_path: str) -> bool:
     return _get_bucket().blob(gcs_path).exists()
 
