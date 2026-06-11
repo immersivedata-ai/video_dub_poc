@@ -31,6 +31,9 @@ steps:
       - '--service-account=cloudrun-sa@prachi-poc-478711.iam.gserviceaccount.com'
       - '--set-env-vars=STORAGE_DIR=/tmp,GCS_BUCKET=${_GCS_BUCKET},MAX_UPLOAD_MB=500'
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 images:
   - '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_SERVICE}:$SHORT_SHA'
 
